@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AR Hand Tracker & Battle</title>
+    <title>AR Hand Tracker</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -80,17 +80,12 @@
         <div class="glass-panel text-white px-4 py-3 rounded-2xl flex flex-col pointer-events-auto shadow-lg shadow-black/50">
             <h1 class="text-sm font-bold tracking-wider flex items-center gap-2">
                 AR HAND TRACKER
-                <span class="text-[10px] bg-indigo-500 px-2 py-0.5 rounded-full shadow-lg shadow-indigo-500/30">ver.3.0.0</span>
+                <span class="text-[10px] bg-indigo-500 px-2 py-0.5 rounded-full shadow-lg shadow-indigo-500/30">ver.3.1.0</span>
             </h1>
             <div id="status_message" class="text-xs text-gray-300 mt-2 flex items-center gap-2 transition-opacity duration-300">
                 <div id="loading_spinner" class="spinner"></div>
                 <span id="status_text">AIモデルを読み込み中...</span>
             </div>
-        </div>
-
-        <!-- じゃんけんモード切替ボタン -->
-        <div class="glass-panel text-white px-4 py-3 rounded-2xl flex items-center cursor-pointer pointer-events-auto hover:bg-white/10 transition-colors shadow-lg shadow-black/50" id="mode_toggle_btn">
-            <span class="text-sm font-bold" id="mode_btn_text">⚔️ じゃんけん</span>
         </div>
     </div>
 
@@ -123,13 +118,16 @@
             </div>
 
             <!-- YouTube設定タブ -->
-            <div id="content_youtube" class="hidden flex flex-col gap-2">
-                <label class="text-sm text-gray-300 font-semibold">YouTubeのURL</label>
-                <div class="flex gap-2">
-                    <input type="text" id="youtube_url" placeholder="https://youtu.be/..." class="flex-1 bg-gray-800 text-white border border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
-                    <button id="youtube_set_btn" class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-lg">設定</button>
+            <div id="content_youtube" class="hidden flex flex-col gap-3">
+                <label class="text-sm text-gray-300 font-semibold">YouTubeを検索・再生</label>
+                <div class="flex flex-col gap-2">
+                    <input type="text" id="youtube_url" placeholder="検索キーワード または URLを入力" class="w-full bg-gray-800 text-white border border-gray-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                    <button id="youtube_set_btn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors shadow-lg flex items-center justify-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                        検索してトップ動画を設定
+                    </button>
                 </div>
-                <p class="text-[10px] text-gray-400 mt-1">※手のひらが見えたら自動再生されます。音が鳴る場合があります。</p>
+                <p class="text-[10px] text-gray-400 mt-1">※キーワード検索した場合、最も関連性の高い動画が自動再生されます。手のひらが見えると再生開始します。</p>
             </div>
 
             <hr class="border-gray-700 my-1">
@@ -149,7 +147,7 @@
                     <span id="tilt_val" class="text-xs text-indigo-400">60%</span>
                 </div>
                 <input type="range" id="tilt_slider" min="0" max="1" step="0.1" value="0.6">
-                <p class="text-[10px] text-gray-500 leading-tight">0%で常に画面に対して平面(2D)、100%で物理法則に従って立体的に倒れます。</p>
+                <p class="text-[10px] text-gray-500 leading-tight">0%で平面に張り付き、100%で物理法則に従って立体的に倒れます。</p>
             </div>
         </div>
     </div>
@@ -180,8 +178,6 @@
         const scaleVal = document.getElementById('scale_val');
         const tiltSlider = document.getElementById('tilt_slider');
         const tiltVal = document.getElementById('tilt_val');
-        const modeToggleBtn = document.getElementById('mode_toggle_btn');
-        const modeBtnText = document.getElementById('mode_btn_text');
 
         // Tab Elements
         const tabImage = document.getElementById('tab_image');
@@ -199,10 +195,7 @@
         let isHandPresent = false;
         let wasHandPresent = false; // エッジ検出用
         let smoothedData = { x: null, y: null, angle: null, tilt: null, size: null };
-        
-        let currentMode = 'hologram'; // 'hologram' | 'janken'
         let activeTab = 'image'; // 'image' | 'youtube'
-        let battleFrame = 0;
 
         // YouTube Player State
         let player;
@@ -224,30 +217,56 @@
                     'autoplay': 0
                 },
                 events: {
-                    'onReady': () => { isYtReady = true; console.log("YouTube Ready"); }
+                    'onReady': () => { isYtReady = true; console.log("YouTube Ready"); },
+                    'onStateChange': (event) => {
+                        // 手が無い時に自動再生されそうになったら強制停止
+                        if (event.data === YT.PlayerState.PLAYING && !isHandPresent) {
+                            player.pauseVideo();
+                        }
+                    }
                 }
             });
         }
 
+        // URLからIDを抽出する関数
         function extractVideoID(url) {
             const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([^#&?]*).*/;
             const match = url.match(regExp);
             return (match && match[2].length === 11) ? match[2] : null;
         }
 
+        // YouTube 検索/設定ボタンの処理
         ytSetBtn.addEventListener('click', () => {
-            const id = extractVideoID(ytUrlInput.value);
-            if (id && isYtReady) {
-                player.loadVideoById(id);
-                player.pauseVideo(); // 手が見えるまで待機
-                ytSetBtn.textContent = '完了!';
+            const inputVal = ytUrlInput.value.trim();
+            if (!inputVal) {
+                alert('キーワードかURLを入力してください');
+                return;
+            }
+
+            if (isYtReady) {
+                const id = extractVideoID(inputVal);
+                if (id) {
+                    // URLが入力された場合
+                    player.loadVideoById(id);
+                } else {
+                    // キーワード検索の場合 (IFrame APIの検索機能を利用)
+                    player.loadPlaylist({
+                        list: inputVal,
+                        listType: 'search',
+                        index: 0
+                    });
+                }
+                
+                // 読み込み直後は一時停止状態にする（手が映ったら再生）
+                setTimeout(() => { if (typeof player.pauseVideo === 'function') player.pauseVideo(); }, 100);
+                
+                ytSetBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> 準備完了！';
                 ytSetBtn.classList.replace('bg-indigo-600', 'bg-green-600');
+                
                 setTimeout(() => {
-                    ytSetBtn.textContent = '設定';
+                    ytSetBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg> 検索してトップ動画を設定';
                     ytSetBtn.classList.replace('bg-green-600', 'bg-indigo-600');
                 }, 2000);
-            } else {
-                alert('有効なYouTube URLを入力してください');
             }
         });
 
@@ -276,7 +295,6 @@
         tabImage.addEventListener('click', () => switchTab('image'));
         tabYoutube.addEventListener('click', () => switchTab('youtube'));
 
-
         // --- Basic UI & Setup ---
         function resizeCanvas() {
             canvasElement.width = window.innerWidth;
@@ -291,24 +309,11 @@
             statusMessage.style.opacity = '1';
         }
 
-        modeToggleBtn.addEventListener('click', () => {
-            if (currentMode === 'hologram') {
-                currentMode = 'janken';
-                modeBtnText.textContent = '✨ ホログラム';
-                settingsTrigger.style.display = 'none';
-                ytWrapper.style.opacity = '0';
-                if(isYtReady && typeof player.pauseVideo === 'function') player.pauseVideo();
-            } else {
-                currentMode = 'hologram';
-                modeBtnText.textContent = '⚔️ じゃんけん';
-                settingsTrigger.style.display = 'block';
-            }
-        });
-
         settingsTrigger.addEventListener('click', () => {
             settingsModal.classList.remove('hidden');
             setTimeout(() => document.getElementById('settings_content').classList.remove('scale-95'), 10);
         });
+        
         function closeModal() {
             document.getElementById('settings_content').classList.add('scale-95');
             setTimeout(() => settingsModal.classList.add('hidden'), 300);
@@ -347,73 +352,14 @@
             return start + diff * factor;
         }
 
-        // --- Janken Battle Logic ---
-        function detectGesture(landmarks) {
-            const p0 = landmarks[0];
-            const isExtended = (tip, pip) => Math.hypot(landmarks[tip].x - p0.x, landmarks[tip].y - p0.y) > Math.hypot(landmarks[pip].x - p0.x, landmarks[pip].y - p0.y);
-            const extCount = [isExtended(8,6), isExtended(12,10), isExtended(16,14), isExtended(20,18)].filter(x=>x).length;
-            if (extCount <= 1) return 'rock';
-            if (extCount >= 3) return 'paper';
-            if (isExtended(8,6) && isExtended(12,10) && !isExtended(16,14) && !isExtended(20,18)) return 'scissors';
-            return 'rock';
-        }
-
-        function processJankenMode(ctx, landmarksList, w, h) {
-            if (landmarksList.length < 2) {
-                ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
-                ctx.font = "bold 24px Inter";
-                ctx.textAlign = "center";
-                ctx.fillText("両手をカメラに映してください", w / 2, h / 2);
-                return;
-            }
-            const hand1 = landmarksList[0]; const hand2 = landmarksList[1];
-            const c1 = { x: hand1[9].x * w, y: hand1[9].y * h };
-            const c2 = { x: hand2[9].x * w, y: hand2[9].y * h };
-            const g1 = detectGesture(hand1); const g2 = detectGesture(hand2);
-
-            drawConnectors(ctx, hand1, HAND_CONNECTIONS, { color: '#ec4899', lineWidth: 4 });
-            drawConnectors(ctx, hand2, HAND_CONNECTIONS, { color: '#06b6d4', lineWidth: 4 });
-
-            const emojiMap = { 'rock': '✊', 'scissors': '✌️', 'paper': '✋' };
-            ctx.font = "80px Arial"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-            ctx.fillText(emojiMap[g1], c1.x, c1.y - 120); ctx.fillText(emojiMap[g2], c2.x, c2.y - 120);
-
-            let winner = 0;
-            if (g1 === g2) winner = 0;
-            else if ((g1 === 'rock' && g2 === 'scissors') || (g1 === 'scissors' && g2 === 'paper') || (g1 === 'paper' && g2 === 'rock')) winner = 1;
-            else winner = 2;
-
-            battleFrame += 1;
-            if (winner === 1) { drawLaser(ctx, c1, c2, '#ec4899'); drawExplosion(ctx, c2, battleFrame); } 
-            else if (winner === 2) { drawLaser(ctx, c2, c1, '#06b6d4'); drawExplosion(ctx, c1, battleFrame); } 
-            else { drawClash(ctx, { x: (c1.x+c2.x)/2, y: (c1.y+c2.y)/2 }, battleFrame); }
-        }
-
-        function drawLaser(ctx, p1, p2, color) {
-            ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
-            ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.random() * 8 + 4; ctx.shadowBlur = 25; ctx.shadowColor = color; ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
-            ctx.strokeStyle = color; ctx.lineWidth = 15; ctx.globalAlpha = 0.5; ctx.stroke(); ctx.globalAlpha = 1.0; ctx.shadowBlur = 0;
-        }
-        function drawExplosion(ctx, p, frame) {
-            const r = 60 + Math.sin(frame * 0.5) * 15;
-            ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.5, 0, Math.PI * 2); ctx.strokeStyle = "rgba(255, 255, 255, 0.4)"; ctx.lineWidth = 4; ctx.stroke();
-            ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fillStyle = "rgba(255, 50, 0, 0.7)"; ctx.fill();
-            ctx.beginPath(); ctx.arc(p.x, p.y, r * 0.6, 0, Math.PI * 2); ctx.fillStyle = "rgba(255, 255, 0, 0.9)"; ctx.fill();
-        }
-        function drawClash(ctx, p, frame) {
-            const size = 120 + Math.sin(frame * 0.4) * 20;
-            ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(frame * 0.1); ctx.fillStyle = "rgba(255, 200, 0, 0.6)"; ctx.shadowBlur = 20; ctx.shadowColor = "#ff5500";
-            ctx.beginPath();
-            for (let i = 0; i < 10; i++) { ctx.rotate((Math.PI * 2) / 10); ctx.moveTo(0, 0); ctx.lineTo(size, size * 0.1); ctx.lineTo(size * 0.4, size * 0.4); }
-            ctx.fill(); ctx.restore();
-            ctx.font = "italic bold 48px Inter"; ctx.fillStyle = "white"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
-            ctx.shadowBlur = 15; ctx.shadowColor = "red"; ctx.fillText("CLASH!", p.x, p.y); ctx.shadowBlur = 0;
-        }
-
         // --- MediaPipe Initialization ---
         const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-        hands.setOptions({ maxNumHands: 2, modelComplexity: 0, minDetectionConfidence: 0.4, minTrackingConfidence: 0.4 });
+        hands.setOptions({ 
+            maxNumHands: 1, 
+            modelComplexity: 0, 
+            minDetectionConfidence: 0.4, 
+            minTrackingConfidence: 0.4 
+        });
 
         hands.onResults((results) => {
             ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
@@ -423,56 +369,64 @@
             
             // YouTube自動再生制御
             if (hasHand && !wasHandPresent) {
-                if (currentMode === 'hologram' && activeTab === 'youtube' && isYtReady && typeof player.playVideo === 'function') {
+                isHandPresent = true;
+                if (activeTab === 'youtube' && isYtReady && typeof player.playVideo === 'function') {
                     player.playVideo();
                 }
             } else if (!hasHand && wasHandPresent) {
-                if (isYtReady && typeof player.pauseVideo === 'function') player.pauseVideo();
+                isHandPresent = false;
+                if (isYtReady && typeof player.pauseVideo === 'function') {
+                    player.pauseVideo();
+                }
                 ytWrapper.style.opacity = '0';
                 smoothedData = { x: null, y: null, angle: null, tilt: null, size: null };
             }
             wasHandPresent = hasHand;
 
             if (hasHand) {
-                isHandPresent = true;
                 statusMessage.style.opacity = '0';
-
-                if (currentMode === 'janken') {
-                    processJankenMode(ctx, results.multiHandLandmarks, canvasElement.width, canvasElement.height);
-                    return;
-                }
-
-                // --- Hologram Mode ---
                 const landmarks = results.multiHandLandmarks[0];
                 const handedness = results.multiHandedness[0];
-                const p0 = landmarks[0]; const p5 = landmarks[5]; const p9 = landmarks[9]; const p17 = landmarks[17];
+                const p0 = landmarks[0]; 
+                const p5 = landmarks[5]; 
+                const p9 = landmarks[9]; 
+                const p17 = landmarks[17];
                 const aspect = canvasElement.width / canvasElement.height;
 
-                // 骨組み描画 (常に表示)
+                // 骨組み描画
                 drawConnectors(ctx, landmarks, HAND_CONNECTIONS, { color: '#06b6d4', lineWidth: 3 });
                 drawLandmarks(ctx, landmarks, { color: '#a855f7', fillColor: '#ffffff', lineWidth: 2, radius: (data) => [4, 8, 12, 16, 20].includes(data.index) ? 5 : 3 });
 
-                // 中心点 (掌の中央)
+                // 中心点 (手首と中指付け根の中間 = 手のひらの中央)
                 const palmCenterX = (p0.x + p9.x) / 2 * canvasElement.width;
                 const palmCenterY = (p0.y + p9.y) / 2 * canvasElement.height;
 
-                // 3Dサイズ
-                const rawSize = Math.hypot((p9.x-p0.x)*canvasElement.width, (p9.y-p0.y)*canvasElement.height, (p9.z-p0.z)*canvasElement.width) * 1.8;
+                // 3D距離でサイズを決定 (手が横になっても縮まない)
+                const rawSize = Math.hypot(
+                    (p9.x - p0.x) * canvasElement.width, 
+                    (p9.y - p0.y) * canvasElement.height, 
+                    (p9.z - p0.z) * canvasElement.width
+                ) * 2.0;
 
-                // 法線ベクトルとパース
+                // 3D法線ベクトルの計算
                 let nx = ((p5.y-p0.y)/aspect * (p17.z-p0.z)) - ((p5.z-p0.z) * (p17.y-p0.y)/aspect);
                 let ny = ((p5.z-p0.z) * (p17.x-p0.x)) - ((p5.x-p0.x) * (p17.z-p0.z));
                 let nz = ((p5.x-p0.x) * (p17.y-p0.y)/aspect) - ((p5.y-p0.y)/aspect * (p17.x-p0.x));
+                
+                // 右手/左手で法線方向を統一
                 if (handedness.label === 'Left') { nx = -nx; ny = -ny; nz = -nz; }
                 
                 const normalLen2D = Math.hypot(nx, ny);
                 const normalLen = Math.hypot(nx, ny, nz);
-                // 潰れすぎ防止緩和 (真横でも見えるように)
-                const rawTilt = Math.max(0.3, normalLen2D / (normalLen || 1));
+                
+                // 潰れすぎ防止 (真横でも常にある程度見えるように 0.2 を下限に設定)
+                const rawTilt = Math.max(0.2, normalLen2D / (normalLen || 1));
                 const targetTilt = lerp(1.0, rawTilt, customTiltAmount);
+                
+                // 画像の回転は「常に指先方向」で固定し、チカチカ・暴れを完全に防止
                 const targetAngle = Math.atan2(p9.y - p0.y, (p9.x - p0.x)*aspect) + Math.PI/2;
 
-                // スムージング
+                // スムージング処理 (ヌルヌル動かす)
                 if (smoothedData.x === null) {
                     smoothedData = { x: palmCenterX, y: palmCenterY, angle: targetAngle, tilt: targetTilt, size: rawSize };
                 } else {
@@ -483,13 +437,14 @@
                     smoothedData.angle = lerpAngle(smoothedData.angle, targetAngle, 0.4);
                 }
 
-                // 影の描画 (共通)
+                // 接地用の影（シャドウ）を描画
                 if ((activeTab === 'image' && loadedImage) || (activeTab === 'youtube' && isYtReady)) {
                     ctx.save();
                     ctx.translate(smoothedData.x, smoothedData.y);
                     ctx.rotate(smoothedData.angle);
                     ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
                     ctx.beginPath();
+                    // 影はサイズに合わせて描画
                     ctx.ellipse(0, 0, smoothedData.size * 0.4 * customScale, smoothedData.size * 0.15 * customScale, 0, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.restore();
@@ -503,16 +458,16 @@
                     ctx.scale(1, smoothedData.tilt);
                     const imgWidth = smoothedData.size * customScale;
                     const imgHeight = (loadedImage.height / loadedImage.width) * imgWidth;
+                    // 画像の底辺が中心点に合うようにY座標をズラす
                     ctx.drawImage(loadedImage, -imgWidth / 2, -imgHeight, imgWidth, imgHeight);
                     ctx.restore();
                 } 
                 // --- YouTube DOM Transform ---
                 else if (activeTab === 'youtube' && isYtReady) {
                     ytWrapper.style.opacity = '1';
-                    // 幅640pxベースから見たスケール率を計算 (少し大きめに出すため 2.0 掛ける)
                     const targetScale = (smoothedData.size * customScale * 2.0) / 640;
                     
-                    // DOMを3D変形 (基点はCSSで bottom center 指定済み)
+                    // DOMを3D変形 (基準点は bottom center)
                     ytWrapper.style.transform = `
                         translate(${smoothedData.x}px, ${smoothedData.y}px) 
                         rotate(${smoothedData.angle}rad) 
@@ -522,11 +477,7 @@
                 }
 
             } else {
-                if (isHandPresent) {
-                    isHandPresent = false;
-                    updateStatus("手を探しています...", false);
-                    battleFrame = 0;
-                }
+                updateStatus("手を探しています...", false);
             }
         });
 
@@ -534,7 +485,10 @@
             onFrame: async () => { await hands.send({image: videoElement}); },
             width: 1280, height: 720, facingMode: 'environment'
         });
-        camera.start().then(() => updateStatus("カメラ起動完了", false)).catch(err => { updateStatus("カメラエラー", false); console.error(err); });
+        
+        camera.start()
+            .then(() => updateStatus("カメラ起動完了", false))
+            .catch(err => { updateStatus("カメラエラー", false); console.error(err); });
     </script>
 </body>
 </html>
