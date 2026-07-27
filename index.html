@@ -76,7 +76,7 @@
                     </svg>
                 </div>
                 <div>
-                    <h1 class="text-white font-bold text-lg sm:text-xl tracking-wide neon-text">AR Hand Sync</h1>
+                    <h1 class="text-white font-bold text-lg sm:text-xl tracking-wide neon-text">AR Hand Sync <span class="text-xs text-cyan-400 align-top ml-1">ver.1.2.0</span></h1>
                     <p class="text-xs text-cyan-200/70 font-medium tracking-wider">画面タップで設定を開く</p>
                 </div>
             </div>
@@ -106,6 +106,15 @@
                     <span class="text-cyan-400 font-medium text-sm text-center" id="upload_label">タップして画像を選択</span>
                 </div>
             </div>
+
+            <!-- 画像サイズ調整スライダー -->
+            <div class="mt-2">
+                <div class="flex justify-between items-center mb-1">
+                    <label for="size_slider" class="text-sm font-medium text-gray-300">画像サイズ調整</label>
+                    <span id="size_value_display" class="text-xs text-cyan-400 font-bold">x2.5</span>
+                </div>
+                <input type="range" id="size_slider" min="0.5" max="6.0" step="0.1" value="2.5" class="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500">
+            </div>
         </div>
     </div>
 
@@ -123,6 +132,8 @@
         const imageUpload = document.getElementById('image_upload');
         const uploadLabel = document.getElementById('upload_label');
         const closeSettingsBtn = document.getElementById('close_settings_btn');
+        const sizeSlider = document.getElementById('size_slider');
+        const sizeValueDisplay = document.getElementById('size_value_display');
 
         // --- State Variables ---
         let stream = null;
@@ -133,6 +144,10 @@
         // Image State
         let hasUserImage = false;
         const userImageElement = new Image();
+
+        // AR Transform State (スムージングと設定用)
+        let customScale = 2.5;
+        let smoothedData = { x: null, y: null, angle: null, size: null };
 
         // --- STREAMING_CHUNK:Configuring Camera Setup... ---
         async function startCamera() {
@@ -179,6 +194,12 @@
             settingsModal.classList.add('hidden');
         });
 
+        // サイズスライダー処理
+        sizeSlider.addEventListener('input', (e) => {
+            customScale = parseFloat(e.target.value);
+            sizeValueDisplay.textContent = `x${customScale.toFixed(1)}`;
+        });
+
         // 画像アップロード処理
         imageUpload.addEventListener('change', (e) => {
             const file = e.target.files[0];
@@ -201,6 +222,20 @@
             statusText.textContent = message;
             loadingSpinner.style.display = showSpinner ? 'block' : 'none';
             statusMessage.style.opacity = '1';
+        }
+
+        // --- STREAMING_CHUNK:Math Helper Functions... ---
+        // 座標やサイズの滑らかな補間（ローパスフィルタ）
+        function lerp(start, end, factor) {
+            return start + (end - start) * factor;
+        }
+
+        // 角度の滑らかな補間（360度の境界をまたぐ場合に対応）
+        function lerpAngle(start, end, factor) {
+            let diff = end - start;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            return start + diff * factor;
         }
 
         // --- STREAMING_CHUNK:Initializing MediaPipe Hands Engine... ---
@@ -262,19 +297,37 @@
                     const midX = middleFingerMCP.x * canvasElement.width;
                     const midY = middleFingerMCP.y * canvasElement.height;
 
-                    // Approximate the center of the palm
-                    const palmCenterX = (wristX + midX) / 2;
-                    const palmCenterY = (wristY + midY) / 2;
+                    // Approximate the center of the palm (生データ)
+                    const rawPalmCenterX = (wristX + midX) / 2;
+                    const rawPalmCenterY = (wristY + midY) / 2;
 
-                    // Calculate rotation angle (Vector from wrist to middle finger base)
-                    // Math.atan2 returns angle to the X axis. We want it pointing UP along the fingers.
-                    const angle = Math.atan2(midY - wristY, midX - wristX);
+                    // Calculate rotation angle (生データ)
+                    const rawAngle = Math.atan2(midY - wristY, midX - wristX);
 
-                    // Calculate hand size (distance from wrist to middle finger) to dynamically scale the AR object
-                    const handSize = Math.hypot(midX - wristX, midY - wristY);
+                    // Calculate hand size (生データ)
+                    const rawHandSize = Math.hypot(midX - wristX, midY - wristY);
+
+                    // --- Smoothing Logic (チカチカ防止) ---
+                    // 反応速度と滑らかさのバランス（0.0〜1.0）
+                    // 低いほど滑らかだが遅れが生じ、高いほど追従するがブレやすくなる
+                    const smoothingFactor = 0.35; 
+
+                    if (smoothedData.x === null) {
+                        // 初回認識時は即座に値を適用
+                        smoothedData.x = rawPalmCenterX;
+                        smoothedData.y = rawPalmCenterY;
+                        smoothedData.angle = rawAngle;
+                        smoothedData.size = rawHandSize;
+                    } else {
+                        // 前回のフレームと現在のフレームの値をブレンド
+                        smoothedData.x = lerp(smoothedData.x, rawPalmCenterX, smoothingFactor);
+                        smoothedData.y = lerp(smoothedData.y, rawPalmCenterY, smoothingFactor);
+                        smoothedData.angle = lerpAngle(smoothedData.angle, rawAngle, smoothingFactor);
+                        smoothedData.size = lerp(smoothedData.size, rawHandSize, smoothingFactor);
+                    }
                     
-                    // Scaling factor for the AR image
-                    const arSize = handSize * 2.5; 
+                    // Scaling factor for the AR image (スムージングされたサイズ × スライダー設定値)
+                    const arSize = smoothedData.size * customScale; 
 
                     //                    
                     if (hasUserImage && userImageElement.complete) {
@@ -282,11 +335,11 @@
                         const floatOffset = Math.sin(time / 400) * (arSize * 0.05);
 
                         ctx.save();
-                        // Move canvas origin to palm center
-                        ctx.translate(palmCenterX, palmCenterY);
+                        // 補間済みの座標へ移動
+                        ctx.translate(smoothedData.x, smoothedData.y);
                         
-                        // 修正: 画像が掌に対して正しく垂直に（指先方向に）立つように角度を調整
-                        ctx.rotate(angle + Math.PI / 2);
+                        // 補間済みの角度に合わせる
+                        ctx.rotate(smoothedData.angle + Math.PI / 2);
 
                         ctx.globalAlpha = 0.95;
                         ctx.drawImage(
@@ -303,6 +356,8 @@
             } else {
                 if (isHandPresent) {
                     isHandPresent = false;
+                    // 手が画面から消えたらスムージングデータをリセット（次回表示時にワープさせないため）
+                    smoothedData = { x: null, y: null, angle: null, size: null }; 
                     updateStatus("手が認識されていません。カメラに手を映してください。", false);
                 }
             }
