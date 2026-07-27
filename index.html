@@ -276,8 +276,7 @@
                     // Scaling factor for the AR image
                     const arSize = handSize * 2.5; 
 
-                    // --- STREAMING_CHUNK:Drawing AR Object Standing on Palm... ---
-                    
+                    //                    
                     if (hasUserImage && userImageElement.complete) {
                         const time = Date.now();
                         const floatOffset = Math.sin(time / 400) * (arSize * 0.05);
@@ -286,8 +285,8 @@
                         // Move canvas origin to palm center
                         ctx.translate(palmCenterX, palmCenterY);
                         
-                        // Rotate canvas so the X axis aligns with the direction of the fingers
-                        ctx.rotate(angle - Math.PI / 2);
+                        // 修正: 画像が掌に対して正しく垂直に（指先方向に）立つように角度を調整
+                        ctx.rotate(angle + Math.PI / 2);
 
                         ctx.globalAlpha = 0.95;
                         ctx.drawImage(
