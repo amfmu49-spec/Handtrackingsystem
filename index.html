@@ -232,12 +232,20 @@
                     nx = -nx; ny = -ny; nz = -nz;
                 }
 
+                // --- 重要: 判定の超安定化 ---
+                // 法線ベクトルを正規化（長さを1にする）
+                // ※これがないと、カメラからの距離（手の見かけの大きさ）によって判定が極端に変わり、「ピンポイントな位置・角度」でしか認識されなくなってしまいます
+                const normalLength = Math.hypot(nx, ny, nz);
+                const normZ = nz / (normalLength || 1);
+
                 // 手の甲・表の判定 (ヒステリシスを持たせてチカチカ防止)
-                // nzが正なら表(掌)、負なら裏(手の甲)
+                // 正規化したZ成分(normZ)は角度のみを表す(-1.0 ~ 1.0)ので、距離に依存せず圧倒的に安定します
                 if (isPalmFacing) {
-                    if (nz < -0.04) isPalmFacing = false; // 裏返ったとみなす
+                    // 表と判定されている時は、かなり裏返る( -0.2 )まで粘る（画像が消えにくくなる）
+                    if (normZ < -0.2) isPalmFacing = false; 
                 } else {
-                    if (nz > 0.04) isPalmFacing = true; // 表に戻ったとみなす
+                    // 裏と判定されている時は、少しでも表を向いたら( > 0.0 )すぐ表示する
+                    if (normZ > 0.0) isPalmFacing = true; 
                 }
 
                 // 表裏に応じた骨組みの色
@@ -269,10 +277,9 @@
                     const targetAngle = Math.atan2(p9.y - p0.y, (p9.x - p0.x) * aspect) + Math.PI / 2;
 
                     // 傾き(パース)の計算: Z軸からの倒れ具合。水平になるほど潰れる。
-                    const normalLength = Math.hypot(nx, ny, nz);
                     const normalLength2D = Math.hypot(nx, ny);
                     const physicalTilt = normalLength2D / (normalLength || 1);
-                    const rawTilt = Math.max(0.1, physicalTilt); // 完全に潰れるのを防止
+                    const rawTilt = Math.max(0.2, physicalTilt); // 完全に潰れるのを防止 (0.1 -> 0.2 に緩和)
 
                     // スライダーによるブレンド (0=2D, 1=3D)
                     const targetTilt = lerp(1.0, rawTilt, customTiltAmount);
