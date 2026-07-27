@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AR Hand Tracker ver.1.3.0</title>
+    <title>AR Hand Tracker ver.1.3.1</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- MediaPipe Libraries -->
@@ -15,10 +15,9 @@
         body {
             font-family: 'Inter', sans-serif;
             background-color: #000;
-            overflow: hidden; /* スクロール防止 */
-            touch-action: none; /* デバイスのデフォルトタッチアクションを無効化 */
+            overflow: hidden;
+            touch-action: none;
         }
-        /* カメラ映像と描画キャンバスを重ねるためのスタイル */
         .layer {
             position: absolute;
             top: 0;
@@ -27,7 +26,6 @@
             height: 100%;
             object-fit: cover;
         }
-        /* UI層のアニメーションとスタイル */
         .glass-panel {
             background: rgba(255, 255, 255, 0.15);
             backdrop-filter: blur(16px);
@@ -39,7 +37,7 @@
 </head>
 <body class="relative w-full h-screen flex justify-center items-center">
 
-    <!-- カメラ映像表示用 (非表示にしてCanvasにのみ描画) -->
+    <!-- カメラ映像表示用 -->
     <video id="input_video" class="layer hidden" autoplay playsinline></video>
     <!-- AR描画用キャンバス -->
     <canvas id="output_canvas" class="layer"></canvas>
@@ -49,7 +47,7 @@
         <div class="glass-panel text-white px-4 py-2 rounded-2xl flex flex-col pointer-events-auto">
             <h1 class="text-sm font-bold tracking-wider flex items-center gap-2">
                 AR HAND TRACKER
-                <span class="text-xs bg-indigo-500 px-2 py-0.5 rounded-full">ver.1.3.0</span>
+                <span class="text-xs bg-indigo-500 px-2 py-0.5 rounded-full">ver.1.3.1</span>
             </h1>
             <div id="status_message" class="text-xs text-gray-300 mt-1 flex items-center transition-opacity duration-300">
                 <div id="loading_spinner" class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
@@ -61,9 +59,9 @@
     <!-- 画面タップを検知する透明なオーバーレイ -->
     <div id="tap_overlay" class="absolute inset-0 z-0 cursor-pointer"></div>
 
-    <!-- 設定モーダル（初期状態は非表示） -->
+    <!-- 設定モーダル -->
     <div id="settings_modal" class="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/60 hidden transition-opacity duration-300">
-        <div class="glass-panel w-full max-w-sm rounded-3xl p-6 transform transition-all text-white flex flex-col gap-6">
+        <div class="glass-panel w-full max-w-sm rounded-3xl p-6 transform transition-all text-white flex flex-col gap-6 relative">
             <div class="flex justify-between items-center">
                 <h2 class="text-xl font-semibold">Settings</h2>
                 <button id="close_settings_btn" class="p-2 hover:bg-white/20 rounded-full transition-colors">
@@ -114,33 +112,23 @@
         const sizeSlider = document.getElementById('size_slider');
         const scaleValueText = document.getElementById('scale_value');
 
-        // アプリケーションの状態
         let isHandPresent = false;
         let customScale = 1.5;
         let hasUserImage = false;
         const userImageElement = new Image();
 
-        // 追従性を高めるためのローパスフィルタ用データ
-        let smoothedData = {
-            x: null,
-            y: null,
-            angle: null,
-            size: null
-        };
+        // 滑らかな追従のためのデータ保持
+        let smoothedData = { x: null, y: null, angle: null, tilt: null, size: null };
 
-        // --- Helper Functions ---
         function updateStatus(message, showSpinner = false) {
             statusText.textContent = message;
             loadingSpinner.style.display = showSpinner ? 'block' : 'none';
             statusMessage.style.opacity = '1';
         }
 
-        // 数値の滑らかな補間 (ローパスフィルタ)
-        function lerp(start, end, factor) {
-            return start + (end - start) * factor;
-        }
-
-        // 角度の滑らかな補間 (-π から π の境界をまたぐ処理)
+        // 数値補間
+        function lerp(start, end, factor) { return start + (end - start) * factor; }
+        // 角度補間（境界またぎ対応）
         function lerpAngle(start, end, factor) {
             let diff = end - start;
             while (diff < -Math.PI) diff += Math.PI * 2;
@@ -148,7 +136,6 @@
             return start + diff * factor;
         }
 
-        // キャンバスのサイズを画面に合わせる
         function resizeCanvas() {
             canvasElement.width = window.innerWidth;
             canvasElement.height = window.innerHeight;
@@ -156,210 +143,170 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // --- STREAMING_CHUNK:MediaPipe Initializing... ---
-        // MediaPipe Handsの初期化
+        //        // ！！修正済み：locateFileに無駄な計算式を入れない！！
         const hands = new Hands({
             locateFile: (file) => {
                 return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
             }
         });
 
-        // 推論の設定：追従性を最優先するため complexityを0に
         hands.setOptions({
-            maxNumHands: 1, // シンプルに1つの手のみ認識
-            modelComplexity: 0, 
+            maxNumHands: 1,
+            modelComplexity: 0, // 0にすることで最高速度の追従性を実現
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5
         });
 
-        // --- STREAMING_CHUNK:Detection and Rendering Loop... ---
         hands.onResults((results) => {
-            // 背景（カメラ映像）の描画
             ctx.save();
             ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-            // スマホの外カメラ映像を全画面にフィットさせる
+            
+            // 背景（カメラ映像）の描画
             const vRatio = canvasElement.width / canvasElement.height;
             const videoRatio = results.image.width / results.image.height;
             let drawW, drawH, drawX, drawY;
-            
             if (vRatio > videoRatio) {
-                drawW = canvasElement.width;
-                drawH = canvasElement.width / videoRatio;
-                drawX = 0;
-                drawY = (canvasElement.height - drawH) / 2;
+                drawW = canvasElement.width; drawH = canvasElement.width / videoRatio;
+                drawX = 0; drawY = (canvasElement.height - drawH) / 2;
             } else {
-                drawH = canvasElement.height;
-                drawW = canvasElement.height * videoRatio;
-                drawX = (canvasElement.width - drawW) / 2;
-                drawY = 0;
+                drawH = canvasElement.height; drawW = canvasElement.height * videoRatio;
+                drawX = (canvasElement.width - drawW) / 2; drawY = 0;
             }
             ctx.drawImage(results.image, drawX, drawY, drawW, drawH);
 
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 isHandPresent = true;
-                statusMessage.style.opacity = '0'; // 認識したらステータスを隠す
+                statusMessage.style.opacity = '0';
 
                 const landmarks = results.multiHandLandmarks[0];
-                const handedness = results.multiHandedness[0]; // Left or Right
+                const handedness = results.multiHandedness[0];
 
-                // 1. 骨組みとポインタの描画（認識されていることを明確にするため）
-                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
-                    color: '#06b6d4', // Tailwind Cyan 500
-                    lineWidth: 3
-                });
-                drawLandmarks(ctx, landmarks, {
-                    color: '#a855f7', // Tailwind Purple 500
-                    fillColor: '#ffffff',
-                    lineWidth: 2,
-                    radius: (data) => {
-                        return [4, 8, 12, 16, 20].includes(data.index) ? 5 : 3;
-                    }
-                });
-
-                // 2. 掌のデータと3Dベクトルの計算
-                const wrist = landmarks[0];
-                const indexMCP = landmarks[5];   // 人差し指の付け根
-                const middleMCP = landmarks[9];  // 中指の付け根
-                const pinkyMCP = landmarks[17];  // 小指の付け根
-
-                // 正規化座標からピクセル座標への変換
-                const wristX = wrist.x * canvasElement.width;
-                const wristY = wrist.y * canvasElement.height;
-                const midX = middleMCP.x * canvasElement.width;
-                const midY = middleMCP.y * canvasElement.height;
-
-                // --- 掌の向き（手の表裏）の判定ロジック ---
-                // キャンバスのアスペクト比を使用して座標を補正し、正確な3Dベクトルを作る
-                const aspectRatio = canvasElement.width / canvasElement.height;
+                // 1. 手のひらの向き（表・裏）を2D外積で強力に判定
+                const p0 = landmarks[0];   // 手首
+                const p5 = landmarks[5];   // 人差し指付け根
+                const p17 = landmarks[17]; // 小指付け根
                 
-                // ベクトル1: 手首 -> 人差し指付け根
-                const v1x = indexMCP.x - wrist.x;
-                const v1y = (indexMCP.y - wrist.y) / aspectRatio;
+                // 画面のアスペクト比を補正したベクトル
+                const aspect = canvasElement.width / canvasElement.height;
+                const v1x = (p5.x - p0.x) * aspect;
+                const v1y = p5.y - p0.y;
+                const v2x = (p17.x - p0.x) * aspect;
+                const v2y = p17.y - p0.y;
+
+                let facing2D = (v1x * v2y) - (v1y * v2x);
+                if (handedness.label === 'Left') facing2D *= -1;
+
+                // チカチカ防止のための強力なヒステリシス
+                if (typeof window.wasPalmFacing === 'undefined') window.wasPalmFacing = false;
                 
-                // ベクトル2: 手首 -> 小指付け根
-                const v2x = pinkyMCP.x - wrist.x;
-                const v2y = (pinkyMCP.y - wrist.y) / aspectRatio;
-
-                // 外積のZ成分を計算
-                let crossProductZ = (v1x * v2y) - (v1y * v2x);
-
-                // MediaPipeはカメラに映った手の左右を判定する。左手の場合外積の向きが逆になる
-                if (handedness.label === "Left") {
-                    crossProductZ *= -1;
-                }
-
-                // --- 修正: チカチカ防止のためのヒステリシス判定 ---
-                // 前回が表なら甘めに、裏なら厳しめに判定し、境界でのバタつきを無くす
-                const upperThreshold = 0.0005;
-                const lowerThreshold = -0.0005;
-                
-                if (typeof window.wasPalmFacing === 'undefined') {
-                    window.wasPalmFacing = false;
-                }
-
                 let isPalmFacing;
                 if (window.wasPalmFacing) {
-                    // 現在「表」なら、完全に裏返るまで「表」を維持
-                    isPalmFacing = crossProductZ > lowerThreshold;
+                    isPalmFacing = facing2D > -0.005; // 一度表になったら粘る
                 } else {
-                    // 現在「裏」なら、しっかり表を向くまで「裏」を維持
-                    isPalmFacing = crossProductZ > upperThreshold;
+                    isPalmFacing = facing2D > 0.005;  // 完全に表を向くまで待つ
                 }
                 window.wasPalmFacing = isPalmFacing;
-                // ------------------------------------------
 
-                // 手のひら（表）か手の甲（裏）かで骨組みの色を変更
-                const connectorColor = isPalmFacing ? '#06b6d4' : '#f59e0b'; // 表：Cyan, 裏：Amber
-                const landmarkColor = isPalmFacing ? '#a855f7' : '#ef4444';  // 表：Purple, 裏：Red
+                // 骨組みの描画（表と裏で色を変える）
+                const connectorColor = isPalmFacing ? '#06b6d4' : '#f59e0b'; // Cyan or Amber
+                const landmarkColor = isPalmFacing ? '#a855f7' : '#ef4444';  // Purple or Red
 
-                // 1. 骨組みとポインタの描画（手の向きに応じて色が変わる）
-                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
-                    color: connectorColor,
-                    lineWidth: 3
-                });
+                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, { color: connectorColor, lineWidth: 3 });
                 drawLandmarks(ctx, landmarks, {
-                    color: landmarkColor,
-                    fillColor: '#ffffff',
-                    lineWidth: 2,
-                    radius: (data) => {
-                        return [4, 8, 12, 16, 20].includes(data.index) ? 5 : 3;
-                    }
+                    color: landmarkColor, fillColor: '#ffffff', lineWidth: 2,
+                    radius: (data) => [4, 8, 12, 16, 20].includes(data.index) ? 5 : 3
                 });
 
-                // 画像を立たせるための角度計算
-                // 手首から中指の付け根へのベクトルを計算し、指先方向を上（垂直）にするため + Math.PI/2 を加算
-                const rawAngle = Math.atan2(midY - wristY, midX - wristX) + (Math.PI / 2);
-
-                // 掌の中心座標（手首と中指の付け根の中間）
-                const rawPalmCenterX = (wristX + midX) / 2;
-                const rawPalmCenterY = (wristY + midY) / 2;
-
-                // 画像の基本サイズ（手首から中指の付け根までの距離ベース）
-                const rawHandSize = Math.hypot(midX - wristX, midY - wristY);
-
-                // --- 追従性を最高潮に高めるスムージング ---
-                const smoothingFactor = 0.85; // 高めの数値で機敏に追従させる
-
-                if (smoothedData.x === null) {
-                    smoothedData.x = rawPalmCenterX;
-                    smoothedData.y = rawPalmCenterY;
-                    smoothedData.angle = rawAngle;
-                    smoothedData.size = rawHandSize;
-                } else {
-                    smoothedData.x = lerp(smoothedData.x, rawPalmCenterX, smoothingFactor);
-                    smoothedData.y = lerp(smoothedData.y, rawPalmCenterY, smoothingFactor);
-                    smoothedData.angle = lerpAngle(smoothedData.angle, rawAngle, smoothingFactor);
-                    smoothedData.size = lerp(smoothedData.size, rawHandSize, smoothingFactor);
-                }
-                
-                const drawSize = smoothedData.size * customScale; 
-
-                // 手のひらがカメラを向いていて、かつユーザー画像が設定されている場合のみ画像を描画
+                // 2. 本格的な3D立体感のための法線ベクトル計算
                 if (hasUserImage && userImageElement.complete && isPalmFacing) {
-                    ctx.translate(smoothedData.x, smoothedData.y); // 掌の中心を原点に
-                    ctx.rotate(smoothedData.angle); // 中指の方向へ向かって回転
+                    const midX = landmarks[9].x * canvasElement.width;
+                    const midY = landmarks[9].y * canvasElement.height;
+                    const wristX = p0.x * canvasElement.width;
+                    const wristY = p0.y * canvasElement.height;
+                    
+                    const palmCenterX = (wristX + midX) / 2;
+                    const palmCenterY = (wristY + midY) / 2;
+                    const rawSize = Math.hypot(midX - wristX, midY - wristY);
 
-                    // 接地感を出すための影（シャドウ）を足元に描画
+                    // 3DベクトルのZ成分を取得
+                    const v1z = p5.z - p0.z;
+                    const v2z = p17.z - p0.z;
+
+                    // 3D空間での法線ベクトル（掌から飛び出す方向）を計算
+                    let nx = (v1y * v2z) - (v1z * v2y);
+                    let ny = (v1z * v2x) - (v1x * v2z);
+                    let nz = (v1x * v2y) - (v1y * v2x);
+
+                    // ベクトルの向きを揃える
+                    nx = -nx; ny = -ny; nz = -nz;
+                    if (handedness.label === 'Left') {
+                        nx = -nx; ny = -ny; nz = -nz;
+                    }
+
+                    // 投影計算：画像が立ち上がるべき方向と、圧縮具合（パース）を導き出す
+                    const normalLength2D = Math.hypot(nx, ny);
+                    const normalLength3D = Math.hypot(nx, ny, nz);
+                    
+                    // 掌から垂直に立ち上がる角度
+                    let targetAngle = Math.atan2(ny, nx) + (Math.PI / 2);
+                    
+                    // 奥行きによる画像の縦潰れ（ストップのポーズだとぺしゃんこになる）
+                    let targetTilt = Math.max(0.15, normalLength2D / normalLength3D);
+
+                    // カメラ真正面を向いた時（法線が画面手前を向く）の回転ブレを防止
+                    if (targetTilt < 0.4) {
+                        const fingerAngle = Math.atan2(landmarks[9].y - p0.y, (landmarks[9].x - p0.x)*aspect) + Math.PI/2;
+                        const blend = (0.4 - targetTilt) / 0.4;
+                        targetAngle = lerpAngle(targetAngle, fingerAngle, blend);
+                    }
+
+                    // 最高潮の追従性（0.85）で平滑化
+                    const smoothing = 0.85;
+                    if (smoothedData.x === null) {
+                        smoothedData = { x: palmCenterX, y: palmCenterY, angle: targetAngle, tilt: targetTilt, size: rawSize };
+                    } else {
+                        smoothedData.x = lerp(smoothedData.x, palmCenterX, smoothing);
+                        smoothedData.y = lerp(smoothedData.y, palmCenterY, smoothing);
+                        smoothedData.angle = lerpAngle(smoothedData.angle, targetAngle, smoothing);
+                        smoothedData.tilt = lerp(smoothedData.tilt, targetTilt, smoothing);
+                        smoothedData.size = lerp(smoothedData.size, rawSize, smoothing);
+                    }
+
+                    const drawSize = smoothedData.size * customScale;
+
+                    // --- 3Dホログラムの描画 ---
+                    ctx.translate(smoothedData.x, smoothedData.y); // 手のひら中心
+                    ctx.rotate(smoothedData.angle); // 3D空間で立ち上がる角度
+
+                    // 接地感のシャドウ
                     ctx.beginPath();
-                    ctx.scale(1, 0.2); // 影用にY軸を潰す
-                    ctx.arc(0, 0, drawSize * 0.35, 0, Math.PI * 2, false);
+                    ctx.scale(1, 0.2); // 影用に潰す
+                    ctx.arc(0, 0, drawSize * 0.4, 0, Math.PI * 2, false);
                     ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
                     ctx.fill();
-                    ctx.scale(1, 5); // 影用のスケールをリセット
+                    ctx.scale(1, 5); // 影スケールリセット
 
-                    // --- 修正: 擬似3Dパース表現 ---
-                    // 手が手前や奥に倒れた時に画像の縦幅を圧縮し、平面に貼り付いている感を消す
-                    const handTiltZ = middleMCP.z; // Z座標（奥行きの相対値）
-                    const tiltScaleY = Math.max(0.4, 1.0 - Math.abs(handTiltZ) * 8);
-                    ctx.scale(1, tiltScaleY); // Y軸（縦方向）のみスケールを変更
+                    // 立体パース：手のひらがこちらを向くと縦に圧縮され「飛び出し感」が出る
+                    ctx.scale(1, smoothedData.tilt);
 
-                    ctx.globalAlpha = 1.0;
-                    
-                    // 回転後の座標系で、画像の底辺が掌の中心に来るように描画（= 掌の上に立つ）
                     ctx.drawImage(
-                        userImageElement, 
-                        -drawSize / 2, // X: 中心から左へ半分
-                        -drawSize,     // Y: 画像の高さ分上にずらすことで底辺が原点に
-                        drawSize,      // Width
-                        drawSize       // Height
+                        userImageElement,
+                        -drawSize / 2, 
+                        -drawSize,     // 底辺を中心軸に合わせる
+                        drawSize,
+                        drawSize
                     );
                 }
             } else {
                 isHandPresent = false;
-                smoothedData = { x: null, y: null, angle: null, size: null };
+                smoothedData = { x: null, y: null, angle: null, tilt: null, size: null };
             }
             ctx.restore();
         });
 
-        // --- STREAMING_CHUNK:Camera Initialization & Events... ---
-        // スマホの外カメラを起動
         const camera = new Camera(videoElement, {
-            onFrame: async () => {
-                await hands.send({image: videoElement});
-            },
-            width: 1280,
-            height: 720,
-            facingMode: 'environment' // 外カメラ指定
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 1280, height: 720, facingMode: 'environment'
         });
 
         updateStatus("AIモデルを読み込み中...", true);
@@ -370,26 +317,17 @@
             console.error(err);
         });
 
-        // --- UI & Event Listeners ---
-        // 画面タップで設定モーダルを開く
-        tapOverlay.addEventListener('click', () => {
-            settingsModal.classList.remove('hidden');
-        });
-
-        // 設定モーダルの背景または閉じるボタンで閉じる
+        // UIイベント
+        tapOverlay.addEventListener('click', () => settingsModal.classList.remove('hidden'));
         settingsModal.addEventListener('click', (e) => {
             if (e.target === settingsModal || e.target === closeSettingsBtn || closeSettingsBtn.contains(e.target)) {
                 settingsModal.classList.add('hidden');
             }
         });
-
-        // スライダーのイベント
         sizeSlider.addEventListener('input', (e) => {
             customScale = parseFloat(e.target.value);
             scaleValueText.textContent = `${Math.round(customScale * 100 / 1.5)}%`;
         });
-
-        // 画像アップロードのイベント
         imageUpload.addEventListener('change', (e) => {
             const file = e.target.files[0];
             if (file) {
