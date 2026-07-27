@@ -62,7 +62,7 @@
     <div id="tap_overlay" class="absolute inset-0 z-0 cursor-pointer"></div>
 
     <!-- 設定モーダル（初期状態は非表示） -->
-    <div id="settings_modal" class="absolute inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-black/60 hidden transition-opacity duration-300">
+    <div id="settings_modal" class="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/60 hidden transition-opacity duration-300">
         <div class="glass-panel w-full max-w-sm rounded-3xl p-6 transform transition-all text-white flex flex-col gap-6">
             <div class="flex justify-between items-center">
                 <h2 class="text-xl font-semibold">Settings</h2>
@@ -252,6 +252,24 @@
                 const isPalmFacing = crossProductZ > 0.002; 
                 // ------------------------------------------
 
+                // 手のひら（表）か手の甲（裏）かで骨組みの色を変更
+                const connectorColor = isPalmFacing ? '#06b6d4' : '#f59e0b'; // 表：Cyan, 裏：Amber
+                const landmarkColor = isPalmFacing ? '#a855f7' : '#ef4444';  // 表：Purple, 裏：Red
+
+                // 1. 骨組みとポインタの描画（手の向きに応じて色が変わる）
+                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
+                    color: connectorColor,
+                    lineWidth: 3
+                });
+                drawLandmarks(ctx, landmarks, {
+                    color: landmarkColor,
+                    fillColor: '#ffffff',
+                    lineWidth: 2,
+                    radius: (data) => {
+                        return [4, 8, 12, 16, 20].includes(data.index) ? 5 : 3;
+                    }
+                });
+
                 // 画像を立たせるための角度計算
                 // 手首から中指の付け根へのベクトルを計算し、指先方向を上（垂直）にするため + Math.PI/2 を加算
                 const rawAngle = Math.atan2(midY - wristY, midX - wristX) + (Math.PI / 2);
@@ -284,6 +302,14 @@
                 if (hasUserImage && userImageElement.complete && isPalmFacing) {
                     ctx.translate(smoothedData.x, smoothedData.y); // 掌の中心を原点に
                     ctx.rotate(smoothedData.angle); // 中指の方向へ向かって回転
+
+                    // 接地感を出すための影（シャドウ）を足元に描画
+                    ctx.beginPath();
+                    ctx.scale(1, 0.2); // Y軸を潰して楕円にする
+                    ctx.arc(0, 0, drawSize * 0.35, 0, Math.PI * 2, false);
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                    ctx.fill();
+                    ctx.scale(1, 5); // スケールを元に戻す
 
                     ctx.globalAlpha = 1.0;
                     
