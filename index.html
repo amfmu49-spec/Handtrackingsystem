@@ -454,7 +454,12 @@
                 const targetTilt = lerp(1.0, rawTilt, customTiltAmount);
                 
                 // 画像の回転は「常に指先方向」で固定し、チカチカ・暴れを完全に防止
-                const targetAngle = Math.atan2(p9.y - p0.y, (p9.x - p0.x)*aspect) + Math.PI/2;
+                let targetAngle = Math.atan2(p9.y - p0.y, (p9.x - p0.x)*aspect) + Math.PI/2;
+
+                // YouTubeの場合は、手を横に向けたときに見やすくなるように90度左に倒す
+                if (activeTab === 'youtube') {
+                    targetAngle -= Math.PI / 2;
+                }
 
                 // スムージング処理 (ヌルヌル動かす)
                 if (smoothedData.x === null) {
