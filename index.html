@@ -2,152 +2,117 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AR Hand Tracker ver.1.3.4</title>
-    <!-- Tailwind CSS -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AR Hand Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- MediaPipe Libraries -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
     <style>
-        body {
-            font-family: 'Inter', sans-serif;
-            background-color: #000;
-            overflow: hidden;
-            touch-action: none;
-        }
-        .layer {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-        .glass-panel {
-            background: rgba(255, 255, 255, 0.15);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-        }
+        body { margin: 0; overflow: hidden; background-color: #0f172a; font-family: 'Inter', sans-serif; }
+        .layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        .glass-panel { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
+        .glass-modal { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        input[type=range] { -webkit-appearance: none; background: transparent; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 20px; width: 20px; border-radius: 50%; background: #6366f1; cursor: pointer; margin-top: -8px; box-shadow: 0 0 10px rgba(99, 102, 241, 0.5); }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px; }
+        /* スピナーアニメーション */
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .spinner { border: 3px solid rgba(255,255,255,0.1); border-left-color: #6366f1; border-radius: 50%; width: 16px; height: 16px; animation: spin 1s linear infinite; }
     </style>
 </head>
 <body class="relative w-full h-screen flex justify-center items-center">
 
-    <!-- カメラ映像表示用 -->
+    <!-- カメラ映像表示用 (非表示にしてCanvasに描画) -->
     <video id="input_video" class="layer hidden" autoplay playsinline></video>
     <!-- AR描画用キャンバス -->
     <canvas id="output_canvas" class="layer"></canvas>
 
     <!-- ヘッダー情報 -->
     <div id="ui_layer" class="absolute top-0 left-0 w-full p-4 flex justify-between items-start pointer-events-none z-10">
-        <div class="glass-panel text-white px-4 py-2 rounded-2xl flex flex-col pointer-events-auto">
+        <div class="glass-panel text-white px-4 py-3 rounded-2xl flex flex-col pointer-events-auto">
             <h1 class="text-sm font-bold tracking-wider flex items-center gap-2">
                 AR HAND TRACKER
-                <span class="text-xs bg-indigo-500 px-2 py-0.5 rounded-full">ver.1.3.4</span>
+                <span class="text-xs bg-indigo-500 px-2 py-0.5 rounded-full shadow-lg shadow-indigo-500/30">ver.1.3.6</span>
             </h1>
-            <div id="status_message" class="text-xs text-gray-300 mt-1 flex items-center transition-opacity duration-300">
-                <div id="loading_spinner" class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin mr-2"></div>
-                <span id="status_text">カメラを起動中...</span>
+            <div id="status_message" class="text-xs text-gray-300 mt-2 flex items-center gap-2 transition-opacity duration-300">
+                <div id="loading_spinner" class="spinner"></div>
+                <span id="status_text">AIモデルを読み込み中...</span>
             </div>
         </div>
     </div>
 
-    <!-- 画面タップを検知する透明なオーバーレイ -->
-    <div id="tap_overlay" class="absolute inset-0 z-0 cursor-pointer"></div>
+    <!-- 画面全体を覆う透明な設定起動ボタン -->
+    <div id="settings_trigger" class="absolute inset-0 z-0 cursor-pointer"></div>
 
     <!-- 設定モーダル -->
-    <div id="settings_modal" class="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/60 hidden transition-opacity duration-300">
-        <div class="glass-panel w-full max-w-sm rounded-3xl p-6 transform transition-all text-white flex flex-col gap-6 relative">
-            <div class="flex justify-between items-center">
-                <h2 class="text-xl font-semibold">Settings</h2>
-                <button id="close_settings_btn" class="p-2 hover:bg-white/20 rounded-full transition-colors">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+    <div id="settings_modal" class="hidden absolute inset-0 bg-black/60 z-50 flex justify-center items-center backdrop-blur-sm transition-opacity duration-300">
+        <div class="glass-modal text-white p-6 rounded-3xl w-11/12 max-w-sm flex flex-col gap-6 transform transition-transform duration-300 scale-95" id="settings_content">
+            <div class="flex justify-between items-center border-b border-gray-700 pb-3">
+                <h2 class="text-lg font-bold">AR設定</h2>
+                <button id="close_modal_btn" class="text-gray-400 hover:text-white p-2">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
             </div>
-
-            <!-- 画像アップロード -->
-            <div class="flex flex-col gap-2">
-                <label class="text-sm text-gray-300">ホログラム画像 (PNG / GIF等)</label>
-                <div class="relative group cursor-pointer">
-                    <input type="file" id="image_upload" accept="image/png, image/jpeg, image/gif" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" />
-                    <div class="w-full bg-white/10 hover:bg-white/20 transition-colors border border-dashed border-white/40 rounded-xl p-4 flex flex-col items-center justify-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-400"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
-                        <span id="upload_text" class="text-sm font-medium">画像をタップして選択</span>
-                    </div>
-                </div>
-            </div>
-
-            <!-- サイズ調整スライダー -->
-            <div class="flex flex-col gap-2">
-                <label class="text-sm text-gray-300 flex justify-between">
-                    <span>画像サイズ</span>
-                    <span id="scale_value">100%</span>
-                </label>
-                <input type="range" id="size_slider" min="0.5" max="3" step="0.1" value="1.5" class="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
-            </div>
-
-            <!-- 3D立体感調整スライダー -->
-            <div class="flex flex-col gap-2">
-                <label class="text-sm text-gray-300 flex justify-between">
-                    <span>3D立体感 (立ち上がり度)</span>
-                    <span id="tilt_value">60%</span>
-                </label>
-                <input type="range" id="tilt_slider" min="0" max="1" step="0.05" value="0.6" class="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-500" />
-            </div>
             
-            <p class="text-xs text-gray-400 text-center mt-2">画面の枠外をタップしても閉じれます</p>
+            <div class="flex flex-col gap-2">
+                <label class="text-sm text-gray-300 font-semibold">1. 画像をアップロード</label>
+                <label for="image_upload" class="flex items-center justify-center w-full p-4 border-2 border-dashed border-gray-600 rounded-xl hover:border-indigo-500 hover:bg-indigo-500/10 cursor-pointer transition-colors">
+                    <span id="upload_label" class="text-sm text-gray-400 text-center">タップして画像を選択<br>(PNG, JPG, GIF)</span>
+                    <input type="file" id="image_upload" class="hidden" accept="image/png, image/jpeg, image/gif">
+                </label>
+            </div>
+
+            <div class="flex flex-col gap-3">
+                <div class="flex justify-between items-center">
+                    <label class="text-sm text-gray-300 font-semibold">2. 画像サイズ</label>
+                    <span id="scale_val" class="text-xs text-indigo-400">100%</span>
+                </div>
+                <input type="range" id="scale_slider" min="0.2" max="3" step="0.1" value="1">
+            </div>
+
+            <div class="flex flex-col gap-3">
+                <div class="flex justify-between items-center">
+                    <label class="text-sm text-gray-300 font-semibold">3. 3D立体感（立ち上がり）</label>
+                    <span id="tilt_val" class="text-xs text-indigo-400">60%</span>
+                </div>
+                <input type="range" id="tilt_slider" min="0" max="1" step="0.1" value="0.6">
+                <p class="text-[10px] text-gray-500 leading-tight">0%で常に正面(2D)、100%で物理法則に従って完全に倒れます。</p>
+            </div>
         </div>
     </div>
 
     <script>
-        // DOM要素の取得
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
         const ctx = canvasElement.getContext('2d');
-        
+        const statusMessage = document.getElementById('status_message');
         const statusText = document.getElementById('status_text');
         const loadingSpinner = document.getElementById('loading_spinner');
-        const statusMessage = document.getElementById('status_message');
-        
-        const tapOverlay = document.getElementById('tap_overlay');
+
+        // UI Elements
+        const settingsTrigger = document.getElementById('settings_trigger');
         const settingsModal = document.getElementById('settings_modal');
-        const closeSettingsBtn = document.getElementById('close_settings_btn');
+        const closeModalBtn = document.getElementById('close_modal_btn');
         const imageUpload = document.getElementById('image_upload');
-        const uploadText = document.getElementById('upload_text');
-        const sizeSlider = document.getElementById('size_slider');
-        const scaleValueText = document.getElementById('scale_value');
+        const uploadLabel = document.getElementById('upload_label');
+        const scaleSlider = document.getElementById('scale_slider');
+        const scaleVal = document.getElementById('scale_val');
         const tiltSlider = document.getElementById('tilt_slider');
-        const tiltValueText = document.getElementById('tilt_value');
+        const tiltVal = document.getElementById('tilt_val');
 
+        // State Variables
+        let loadedImage = null;
+        let customScale = 1.0;
+        let customTiltAmount = 0.6; // 0=2D, 1=3D
         let isHandPresent = false;
-        let customScale = 1.5;
-        let customTiltAmount = 0.6; // 3Dブレンド量 (デフォルト60%)
-        let hasUserImage = false;
-        const userImageElement = new Image();
-
-        // 滑らかな追従のためのデータ保持
+        
+        // 追従・安定化のためのステート
         let smoothedData = { x: null, y: null, angle: null, tilt: null, size: null };
+        let isPalmFacing = true; // 表裏判定のヒステリシス用
 
-        function updateStatus(message, showSpinner = false) {
-            statusText.textContent = message;
-            loadingSpinner.style.display = showSpinner ? 'block' : 'none';
-            statusMessage.style.opacity = '1';
-        }
-
-        // 数値補間
-        function lerp(start, end, factor) { return start + (end - start) * factor; }
-        // 角度補間（境界またぎ対応）
-        function lerpAngle(start, end, factor) {
-            let diff = end - start;
-            while (diff < -Math.PI) diff += Math.PI * 2;
-            while (diff > Math.PI) diff -= Math.PI * 2;
-            return start + diff * factor;
-        }
-
+        // Resize Canvas to fit screen window
         function resizeCanvas() {
             canvasElement.width = window.innerWidth;
             canvasElement.height = window.innerHeight;
@@ -155,227 +120,230 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        //        // ！！修正済み：locateFileに無駄な計算式を入れない！！
+        // Math Helper Functions
+        function lerp(start, end, factor) {
+            return start + (end - start) * factor;
+        }
+        // 角度の滑らかな補間（360度の境界をまたぐ場合に対応）
+        function lerpAngle(start, end, factor) {
+            let diff = end - start;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            return start + diff * factor;
+        }
+        
+        function updateStatus(message, showSpinner = false) {
+            statusText.textContent = message;
+            loadingSpinner.style.display = showSpinner ? 'block' : 'none';
+            statusMessage.style.opacity = '1';
+        }
+
+        // 背景タップでモーダルを開く
+        settingsTrigger.addEventListener('click', () => {
+            settingsModal.classList.remove('hidden');
+            setTimeout(() => document.getElementById('settings_content').classList.remove('scale-95'), 10);
+        });
+
+        // モーダルを閉じる処理（閉じるボタン or 背景タップ）
+        function closeModal() {
+            document.getElementById('settings_content').classList.add('scale-95');
+            setTimeout(() => settingsModal.classList.add('hidden'), 300);
+        }
+        closeModalBtn.addEventListener('click', closeModal);
+        settingsModal.addEventListener('click', (e) => {
+            if(e.target === settingsModal) closeModal();
+        });
+
+        // 画像アップロード処理
+        imageUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        loadedImage = img;
+                        uploadLabel.innerHTML = `<span class="text-indigo-400 font-bold">${file.name}</span><br>設定完了`;
+                        uploadLabel.parentElement.classList.add('border-indigo-500', 'bg-indigo-500/10');
+                    }
+                    img.src = event.target.result;
+                }
+                reader.readAsDataURL(file);
+            }
+        });
+
+        // スライダー処理
+        scaleSlider.addEventListener('input', (e) => {
+            customScale = parseFloat(e.target.value);
+            scaleVal.textContent = Math.round(customScale * 100) + '%';
+        });
+        tiltSlider.addEventListener('input', (e) => {
+            customTiltAmount = parseFloat(e.target.value);
+            tiltVal.textContent = Math.round(customTiltAmount * 100) + '%';
+        });
+
+        // MediaPipeの初期化（ここは絶対にモデルのURLを返すだけにする）
         const hands = new Hands({
             locateFile: (file) => {
                 return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
             }
         });
 
+        // 追従性を上げるため modelComplexity を 0 (Fast) に設定
         hands.setOptions({
-            maxNumHands: 1,
-            modelComplexity: 0, // 0にすることで最高速度の追従性を実現
-            minDetectionConfidence: 0.3, // 水平など厳しい角度でも認識しやすく緩和（0.4から0.3へ）
-            minTrackingConfidence: 0.4   // 追従性を維持しやすく緩和
+            maxNumHands: 2,
+            modelComplexity: 0,
+            minDetectionConfidence: 0.4, // 少し下げて認識しやすく
+            minTrackingConfidence: 0.4
         });
 
         hands.onResults((results) => {
-            ctx.save();
+            // 背景の描画（カメラ映像）
             ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-            
-            // 背景（カメラ映像）の描画
-            const vRatio = canvasElement.width / canvasElement.height;
-            const videoRatio = results.image.width / results.image.height;
-            let drawW, drawH, drawX, drawY;
-            if (vRatio > videoRatio) {
-                drawW = canvasElement.width; drawH = canvasElement.width / videoRatio;
-                drawX = 0; drawY = (canvasElement.height - drawH) / 2;
-            } else {
-                drawH = canvasElement.height; drawW = canvasElement.height * videoRatio;
-                drawX = (canvasElement.width - drawW) / 2; drawY = 0;
-            }
-            ctx.drawImage(results.image, drawX, drawY, drawW, drawH);
+            ctx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 isHandPresent = true;
-                statusMessage.style.opacity = '0';
+                statusMessage.style.opacity = '0'; // 認識したらメッセージを隠す
 
                 const landmarks = results.multiHandLandmarks[0];
-                const handedness = results.multiHandedness[0];
+                const handedness = results.multiHandLandmarks[0]; // 簡易取得
+                const isLeftHand = results.multiHandedness[0].label === 'Left';
 
-                // 1. 手のひらの向き（表・裏）を2D外積で強力に判定
-                const p0 = landmarks[0];   // 手首
-                const p5 = landmarks[5];   // 人差し指付け根
+                const p0 = landmarks[0]; // 手首
+                const p5 = landmarks[5]; // 人差し指付け根
+                const p9 = landmarks[9]; // 中指付け根
                 const p17 = landmarks[17]; // 小指付け根
-                
-                // 画面のアスペクト比を補正したベクトル
+
                 const aspect = canvasElement.width / canvasElement.height;
-                const v1x = (p5.x - p0.x) * aspect;
-                const v1y = p5.y - p0.y;
-                const v2x = (p17.x - p0.x) * aspect;
-                const v2y = p17.y - p0.y;
 
-                let facing2D = (v1x * v2y) - (v1y * v2x);
-                if (handedness.label === 'Left') facing2D *= -1;
+                // --- 1. 3Dベクトルによる表裏判定とパース計算 ---
+                // XとYはアスペクト比を補正
+                const v1 = { x: p5.x - p0.x, y: (p5.y - p0.y) / aspect, z: p5.z - p0.z };
+                const v2 = { x: p17.x - p0.x, y: (p17.y - p0.y) / aspect, z: p17.z - p0.z };
 
-                // チカチカ防止のための強力なヒステリシス（水平時により粘るように緩和）
-                if (typeof window.wasPalmFacing === 'undefined') window.wasPalmFacing = false;
-                
-                let isPalmFacing;
-                if (window.wasPalmFacing) {
-                    isPalmFacing = facing2D > -0.06;  // 一度表になったら、かなり無理な角度でも粘る（チカチカ防止を強化）
-                } else {
-                    isPalmFacing = facing2D > 0.002;  // わずかな表の面積でも表示を開始する
+                // 外積 (法線ベクトル)
+                let nx = (v1.y * v2.z) - (v1.z * v2.y);
+                let ny = (v1.z * v2.x) - (v1.x * v2.z);
+                let nz = (v1.x * v2.y) - (v1.y * v2.x);
+
+                // 左手の場合は法線が逆になるため反転（お辞儀バグ解消）
+                if (isLeftHand) {
+                    nx = -nx; ny = -ny; nz = -nz;
                 }
-                window.wasPalmFacing = isPalmFacing;
 
-                // 骨組みの描画（表と裏で色を変える）
-                const connectorColor = isPalmFacing ? '#06b6d4' : '#f59e0b'; // Cyan or Amber
-                const landmarkColor = isPalmFacing ? '#a855f7' : '#ef4444';  // Purple or Red
+                // 手の甲・表の判定 (ヒステリシスを持たせてチカチカ防止)
+                // nzが負なら表(カメラ側)、正なら裏
+                if (isPalmFacing) {
+                    if (nz > 0.04) isPalmFacing = false; // 裏返ったとみなす
+                } else {
+                    if (nz < -0.04) isPalmFacing = true; // 表に戻ったとみなす
+                }
 
-                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, { color: connectorColor, lineWidth: 3 });
-                drawLandmarks(ctx, landmarks, {
-                    color: landmarkColor, fillColor: '#ffffff', lineWidth: 2,
-                    radius: (data) => [4, 8, 12, 16, 20].includes(data.index) ? 5 : 3
+                // 表裏に応じた骨組みの色
+                const skeletonColor = isPalmFacing ? '#06b6d4' : '#f59e0b'; // シアン / アンバー
+                const jointColor = isPalmFacing ? '#a855f7' : '#ef4444'; // パープル / レッド
+
+                // 骨組みの描画
+                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, { color: skeletonColor, lineWidth: 3 });
+                drawLandmarks(ctx, landmarks, { 
+                    color: jointColor, 
+                    fillColor: '#ffffff', 
+                    lineWidth: 2, 
+                    radius: (data) => { return [4, 8, 12, 16, 20].includes(data.index) ? 5 : 3; }
                 });
 
-                // 2. 本格的な3D立体感のための法線ベクトル計算
-                if (hasUserImage && userImageElement.complete && isPalmFacing) {
-                    const midX = landmarks[9].x * canvasElement.width;
-                    const midY = landmarks[9].y * canvasElement.height;
+                // --- 2. 画像の配置計算 (表の時のみ描画) ---
+                if (isPalmFacing && loadedImage) {
+                    const midX = p9.x * canvasElement.width;
+                    const midY = p9.y * canvasElement.height;
                     const wristX = p0.x * canvasElement.width;
                     const wristY = p0.y * canvasElement.height;
-                    
-                    const palmCenterX = (wristX + midX) / 2;
-                    const palmCenterY = (wristY + midY) / 2;
-                    
-                    // Z座標（奥行き）をピクセルスケールに変換
-                    const wristZ = p0.z * canvasElement.width;
-                    const midZ = landmarks[9].z * canvasElement.width;
-                    
-                    // 2D（画面上の見かけ）の距離ではなく、3D（奥行き込み）の距離でサイズを決定。
-                    // これにより、手がカメラ奥へ水平に倒れても画像が極端に小さくならない。
-                    const rawSize = Math.hypot(midX - wristX, midY - wristY, midZ - wristZ);
 
-                    // 3DベクトルのZ成分を取得
-                    const v1z = p5.z - p0.z;
-                    const v2z = p17.z - p0.z;
+                    // サイズ計算: Z座標(奥行き)も含めた3D距離で計算。手が水平になっても小さくならない。
+                    const dx3d = (p9.x - p0.x) * canvasElement.width;
+                    const dy3d = (p9.y - p0.y) * canvasElement.height;
+                    const dz3d = (p9.z - p0.z) * canvasElement.width;
+                    const rawSize = Math.hypot(dx3d, dy3d, dz3d) * 1.8;
 
-                    // 3D空間での法線ベクトル（掌から飛び出す方向）を計算
-                    let nx = (v1y * v2z) - (v1z * v2y);
-                    let ny = (v1z * v2x) - (v1x * v2z);
-                    let nz = (v1x * v2y) - (v1y * v2x);
+                    // 角度の計算: "常に2D上での手首から中指の方向" に固定。(チカチカ・回転ブレの完全撲滅)
+                    const targetAngle = Math.atan2(p9.y - p0.y, (p9.x - p0.x) * aspect) + Math.PI / 2;
 
-                    // ベクトルの向きを揃える
-                    nx = -nx; ny = -ny; nz = -nz;
-                    if (handedness.label === 'Left') {
-                        nx = -nx; ny = -ny; nz = -nz;
-                    }
-
-                    // --- 3Dと2Dのブレンド計算 ---
-                    // 1. 完全な3Dモード（法線ベース）
+                    // 傾き(パース)の計算: Z軸からの倒れ具合。水平になるほど潰れる。
+                    const normalLength = Math.hypot(nx, ny, nz);
                     const normalLength2D = Math.hypot(nx, ny);
-                    const normalLength3D = Math.hypot(nx, ny, nz);
-                    
-                    let angle3D = Math.atan2(ny, nx) + (Math.PI / 2);
-                    const rawTilt3D = Math.max(0.15, normalLength2D / normalLength3D);
+                    const physicalTilt = normalLength2D / (normalLength || 1);
+                    const rawTilt = Math.max(0.1, physicalTilt); // 完全に潰れるのを防止
 
-                    // 真正面を向いた時の回転ブレ防止（3D用）
-                    if (rawTilt3D < 0.4) {
-                        const fingerAngle3D = Math.atan2(landmarks[9].y - p0.y, (landmarks[9].x - p0.x)*aspect) + Math.PI/2;
-                        const blend3D = (0.4 - rawTilt3D) / 0.4;
-                        angle3D = lerpAngle(angle3D, fingerAngle3D, blend3D);
-                    }
+                    // スライダーによるブレンド (0=2D, 1=3D)
+                    const targetTilt = lerp(1.0, rawTilt, customTiltAmount);
 
-                    // 2. 完全な2Dモード（指先の方向ベース、圧縮なし）
-                    const angle2D = Math.atan2(landmarks[9].y - p0.y, (landmarks[9].x - p0.x)*aspect) + Math.PI/2;
-                    const tilt2D = 1.0;
-
-                    // 3. 設定値（0〜1）に基づくブレンド（補間）
-                    let targetAngle = lerpAngle(angle2D, angle3D, customTiltAmount);
-                    let targetTilt = lerp(tilt2D, rawTilt3D, customTiltAmount);
-
-                    // パラメータごとに平滑化（スムージング）係数を分けてブレを徹底排除
-                    // 位置はサクサク追従させ、角度やサイズはじわっと追従させてピクつきを抑える
-                    const smoothPos = 0.65;   // 位置の追従性（高いほど速い）
-                    const smoothAngle = 0.12; // 角度の安定性（極めて低くしてブレを完全吸収）
-                    const smoothScale = 0.25; // 傾き・サイズの安定性
-
+                    // 平滑化(スムージング)処理。位置は早く、角度と傾きはじわっと追従させる。
                     if (smoothedData.x === null) {
-                        smoothedData = { x: palmCenterX, y: palmCenterY, angle: targetAngle, tilt: targetTilt, size: rawSize };
+                        smoothedData = { x: midX, y: midY, angle: targetAngle, tilt: targetTilt, size: rawSize };
                     } else {
-                        smoothedData.x = lerp(smoothedData.x, palmCenterX, smoothPos);
-                        smoothedData.y = lerp(smoothedData.y, palmCenterY, smoothPos);
-                        smoothedData.angle = lerpAngle(smoothedData.angle, targetAngle, smoothAngle);
-                        smoothedData.tilt = lerp(smoothedData.tilt, targetTilt, smoothScale);
-                        smoothedData.size = lerp(smoothedData.size, rawSize, smoothScale);
+                        smoothedData.x = lerp(smoothedData.x, midX, 0.7);
+                        smoothedData.y = lerp(smoothedData.y, midY, 0.7);
+                        smoothedData.size = lerp(smoothedData.size, rawSize, 0.4);
+                        smoothedData.tilt = lerp(smoothedData.tilt, targetTilt, 0.2); // 傾きはゆっくり
+                        smoothedData.angle = lerpAngle(smoothedData.angle, targetAngle, 0.3); // 角度もゆっくり
                     }
 
-                    const drawSize = smoothedData.size * customScale;
+                    // --- 3. 画像と影の描画 ---
+                    ctx.save();
+                    // 中指の付け根を中心に移動
+                    ctx.translate(smoothedData.x, smoothedData.y);
+                    // 回転(中指方向)
+                    ctx.rotate(smoothedData.angle);
 
-                    // --- 3Dホログラムの描画 ---
-                    ctx.translate(smoothedData.x, smoothedData.y); // 手のひら中心
-                    ctx.rotate(smoothedData.angle); // 3D空間で立ち上がる角度
-
-                    // 接地感のシャドウ
+                    // 影の描画 (接地面を演出)
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
                     ctx.beginPath();
-                    ctx.scale(1, 0.2); // 影用に潰す
-                    ctx.arc(0, 0, drawSize * 0.4, 0, Math.PI * 2, false);
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                    ctx.ellipse(0, 0, smoothedData.size * 0.4 * customScale, smoothedData.size * 0.15 * customScale, 0, 0, Math.PI * 2);
                     ctx.fill();
-                    ctx.scale(1, 5); // 影スケールリセット
 
-                    // 立体パース：手のひらがこちらを向くと縦に圧縮され「飛び出し感」が出る
+                    // Y軸方向へのパース(圧縮)を適用
                     ctx.scale(1, smoothedData.tilt);
 
-                    ctx.drawImage(
-                        userImageElement,
-                        -drawSize / 2, 
-                        -drawSize,     // 底辺を中心軸に合わせる
-                        drawSize,
-                        drawSize
-                    );
+                    // 画像サイズの計算と描画
+                    const imgWidth = smoothedData.size * customScale;
+                    const imgHeight = (loadedImage.height / loadedImage.width) * imgWidth;
+                    
+                    // 画像の「底辺の中央」が原点(0,0)にくるようにオフセットして描画
+                    ctx.drawImage(loadedImage, -imgWidth / 2, -imgHeight, imgWidth, imgHeight);
+
+                    ctx.restore();
+                } else if (!isPalmFacing) {
+                    // 手が裏返った時は位置データをリセットして、次に表になった時スムーズに出現させる
+                    smoothedData = { x: null, y: null, angle: null, tilt: null, size: null };
                 }
+
             } else {
-                isHandPresent = false;
-                smoothedData = { x: null, y: null, angle: null, tilt: null, size: null };
+                if (isHandPresent) {
+                    isHandPresent = false;
+                    updateStatus("手を探しています...", false);
+                    smoothedData = { x: null, y: null, angle: null, tilt: null, size: null };
+                }
             }
-            ctx.restore();
         });
 
         const camera = new Camera(videoElement, {
-            onFrame: async () => { await hands.send({image: videoElement}); },
-            width: 1280, height: 720, facingMode: 'environment'
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 1280,
+            height: 720,
+            facingMode: 'environment' // 外カメラをデフォルトに
         });
 
-        updateStatus("AIモデルを読み込み中...", true);
-        camera.start().then(() => {
-            updateStatus("手をカメラに向けてください");
-        }).catch((err) => {
-            updateStatus("カメラへのアクセスが拒否されました");
-            console.error(err);
-        });
-
-        // UIイベント
-        tapOverlay.addEventListener('click', () => settingsModal.classList.remove('hidden'));
-        settingsModal.addEventListener('click', (e) => {
-            if (e.target === settingsModal || e.target === closeSettingsBtn || closeSettingsBtn.contains(e.target)) {
-                settingsModal.classList.add('hidden');
-            }
-        });
-        sizeSlider.addEventListener('input', (e) => {
-            customScale = parseFloat(e.target.value);
-            scaleValueText.textContent = `${Math.round(customScale * 100 / 1.5)}%`;
-        });
-        tiltSlider.addEventListener('input', (e) => {
-            customTiltAmount = parseFloat(e.target.value);
-            tiltValueText.textContent = `${Math.round(customTiltAmount * 100)}%`;
-        });
-        imageUpload.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    userImageElement.src = event.target.result;
-                    userImageElement.onload = () => {
-                        hasUserImage = true;
-                        uploadText.textContent = "画像が設定されました";
-                        uploadText.classList.add("text-indigo-400");
-                    };
-                };
-                reader.readAsDataURL(file);
-            }
-        });
+        camera.start()
+            .then(() => {
+                updateStatus("カメラ起動成功。手をかざしてください。", false);
+            })
+            .catch(err => {
+                updateStatus("カメラへのアクセスが拒否されました", false);
+                console.error(err);
+            });
     </script>
 </body>
 </html>
