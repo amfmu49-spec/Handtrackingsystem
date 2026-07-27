@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AR Hand Tracker - Hologram on Palm</title>
+
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- MediaPipe Hands and Drawing Utilities -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <!-- Custom CSS for UI animations and glassmorphism -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            overscroll-behavior: none; /* Prevent pull-to-refresh on mobile */
+        }
+        
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .neon-text {
+            text-shadow: 0 0 10px rgba(6, 182, 212, 0.8), 0 0 20px rgba(6, 182, 212, 0.5);
+        }
+
+        /* Custom spinner animation */
+        .spinner {
+            border: 3px solid rgba(255,255,255,0.1);
+            border-left-color: #06b6d4;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Mirror effect for front camera */
+        .mirrored {
+            transform: scaleX(-1);
+        }
+    </style>
+</head>
+<body class="relative w-screen h-screen overflow-hidden flex items-center justify-center">
+
+    <!-- Video Element (Source of camera feed) -->
+    <video id="input_video" class="absolute inset-0 w-full h-full object-cover z-0" playsinline></video>
+    
+    <!-- Canvas Overlay (Where MediaPipe skeleton and AR object are drawn) -->
+    <canvas id="output_canvas" class="absolute inset-0 w-full h-full object-cover z-10"></canvas>
+
+    <!-- UI Layer -->
+    <div id="ui_layer" class="absolute inset-0 z-20 pointer-events-none flex flex-col justify-between p-4 sm:p-6 lg:p-8">
+        
+        <!-- Header Panel -->
+        <div class="pointer-events-auto glass-panel rounded-2xl p-4 shadow-2xl flex justify-between items-center transition-all">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center border border-cyan-400/50">
+                    <svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 11.5V14m0-2.5v-6a1.5 1.5 0 113 0m-3 6a1.5 1.5 0 00-3 0v2a7.5 7.5 0 0015 0v-5a1.5 1.5 0 00-3 0m-6-3V11m0-5.5v-1a1.5 1.5 0 013 0v1m0 0V11m0-5.5a1.5 1.5 0 013 0v3m0 0V11"></path>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-white font-bold text-lg sm:text-xl tracking-wide neon-text">AR Hand Sync</h1>
+                    <p class="text-xs text-cyan-200/70 font-medium tracking-wider">PALM RECOGNITION ACTIVE</p>
+                </div>
+            </div>
+            
+            <button id="switch_camera_btn" class="pointer-events-auto bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white p-3 sm:px-5 sm:py-2.5 rounded-full font-semibold transition-all shadow-[0_0_15px_rgba(6,182,212,0.4)] hover:shadow-[0_0_25px_rgba(6,182,212,0.6)] flex items-center gap-2 active:scale-95">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+                <span class="hidden sm:inline">カメラ切替</span>
+            </button>
+        </div>
+
+        <!-- Notification / Instructions -->
+        <div id="status_message" class="mx-auto glass-panel px-6 py-3 rounded-full text-white/90 text-sm font-medium flex items-center gap-3 transition-opacity duration-500">
+            <div class="spinner" id="loading_spinner"></div>
+            <span id="status_text">システム初期化中... カメラを許可してください。</span>
+        </div>
+    </div>
+
+    <script>
+        // --- Core Elements ---
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const ctx = canvasElement.getContext('2d');
+        const switchCamBtn = document.getElementById('switch_camera_btn');
+        const statusText = document.getElementById('status_text');
+        const statusMessage = document.getElementById('status_message');
+        const loadingSpinner = document.getElementById('loading_spinner');
+
+        // --- State Variables ---
+        let stream = null;
+        let isFrontCamera = false; // Default to Environment (Back) Camera
+        let lastVideoTime = -1;
+        let isModelLoaded = false;
+        let isHandPresent = false;
+
+        // --- Generate Stylish AR Image (Holographic Crystal) ---
+        // Instead of relying on external links, we generate an SVG dynamically.
+        const arImage = new Image();
+        const svgContent = `
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 250">
+                <defs>
+                    <linearGradient id="crystalGrad" x1="50%" y1="0%" x2="50%" y2="100%">
+                        <stop offset="0%" stop-color="#00f2fe" stop-opacity="0.9" />
+                        <stop offset="50%" stop-color="#4facfe" stop-opacity="0.8" />
+                        <stop offset="100%" stop-color="#00215c" stop-opacity="0.4" />
+                    </linearGradient>
+                    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                        <feGaussianBlur stdDeviation="8" result="blur" />
+                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                    </filter>
+                </defs>
+                <!-- Base / Magic Circle -->
+                <ellipse cx="100" cy="220" rx="80" ry="20" fill="none" stroke="#00f2fe" stroke-width="4" filter="url(#glow)"/>
+                <ellipse cx="100" cy="220" rx="60" ry="10" fill="none" stroke="#4facfe" stroke-width="2" stroke-dasharray="10,5" opacity="0.8"/>
+                
+                <!-- Floating Crystal Object -->
+                <polygon points="100,20 160,100 100,180 40,100" fill="url(#crystalGrad)" filter="url(#glow)"/>
+                <polygon points="100,20 100,180 40,100" fill="#ffffff" opacity="0.3"/>
+                <polygon points="100,20 160,100 100,100" fill="#ffffff" opacity="0.5"/>
+                
+                <!-- Holographic Text -->
+                <text x="100" y="245" font-family="sans-serif" font-size="20" fill="#00f2fe" text-anchor="middle" font-weight="bold" filter="url(#glow)">AR LINK ESTABLISHED</text>
+            </svg>
+        `;
+        arImage.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgContent);
+
+        // --- STREAMING_CHUNK:Configuring Camera Setup... ---
+        async function startCamera() {
+            // Stop existing stream tracks before switching
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+
+            const constraints = {
+                video: {
+                    facingMode: isFrontCamera ? "user" : "environment",
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            };
+
+            try {
+                stream = await navigator.mediaDevices.getUserMedia(constraints);
+                videoElement.srcObject = stream;
+                
+                // Toggle mirror effect based on camera direction
+                if (isFrontCamera) {
+                    videoElement.classList.add('mirrored');
+                    canvasElement.classList.add('mirrored');
+                } else {
+                    videoElement.classList.remove('mirrored');
+                    canvasElement.classList.remove('mirrored');
+                }
+
+                videoElement.play();
+                
+                if(!isModelLoaded) {
+                    updateStatus("MediaPipeモデルを読み込み中...", true);
+                }
+            } catch (error) {
+                console.error("Camera access error:", error);
+                updateStatus("エラー: カメラへのアクセスが拒否されました。", false);
+            }
+        }
+
+        switchCamBtn.addEventListener('click', () => {
+            isFrontCamera = !isFrontCamera;
+            startCamera();
+        });
+
+        // Helper to update the floating status bubble
+        function updateStatus(message, showSpinner = false) {
+            statusText.textContent = message;
+            loadingSpinner.style.display = showSpinner ? 'block' : 'none';
+            statusMessage.style.opacity = '1';
+        }
+
+        // --- STREAMING_CHUNK:Initializing MediaPipe Hands Engine... ---
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
+
+        hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
+        });
+
+        // --- STREAMING_CHUNK:Implementing Results Processing & Rendering... ---
+        hands.onResults((results) => {
+            if (!isModelLoaded) {
+                isModelLoaded = true;
+                updateStatus("準備完了！カメラに手をかざしてください。", false);
+                setTimeout(() => { if(!isHandPresent) statusMessage.style.opacity = '0'; }, 3000);
+            }
+
+            // Sync canvas size to video size to ensure 1:1 drawing coordinates
+            canvasElement.width = videoElement.videoWidth;
+            canvasElement.height = videoElement.videoHeight;
+
+            ctx.save();
+            ctx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                isHandPresent = true;
+                statusMessage.style.opacity = '0'; // Hide instructions when hand is detected
+
+                for (const landmarks of results.multiHandLandmarks) {
+                    
+                    // 1. Draw Skeleton and Pointers (骨組みとポインタ)
+                    // Customize drawing style to match the neon UI
+                    drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
+                        color: '#06b6d4', // Tailwind Cyan 500
+                        lineWidth: 3
+                    });
+                    drawLandmarks(ctx, landmarks, {
+                        color: '#a855f7', // Tailwind Purple 500
+                        fillColor: '#ffffff',
+                        lineWidth: 2,
+                        radius: (data) => {
+                            // Make fingertips slightly larger
+                            return [4, 8, 12, 16, 20].includes(data.index) ? 5 : 3;
+                        }
+                    });
+
+                    // 2. Calculate Palm Data for AR Placement
+                    const wrist = landmarks[0];
+                    const middleFingerMCP = landmarks[9]; // Base of the middle finger
+
+                    // Convert normalized coordinates (0.0 - 1.0) to pixel values
+                    const wristX = wrist.x * canvasElement.width;
+                    const wristY = wrist.y * canvasElement.height;
+                    const midX = middleFingerMCP.x * canvasElement.width;
+                    const midY = middleFingerMCP.y * canvasElement.height;
+
+                    // Approximate the center of the palm
+                    const palmCenterX = (wristX + midX) / 2;
+                    const palmCenterY = (wristY + midY) / 2;
+
+                    // Calculate rotation angle (Vector from wrist to middle finger base)
+                    // Math.atan2 returns angle to the X axis. We want it pointing UP along the fingers.
+                    const angle = Math.atan2(midY - wristY, midX - wristX);
+
+                    // Calculate hand size (distance from wrist to middle finger) to dynamically scale the AR object
+                    const handSize = Math.hypot(midX - wristX, midY - wristY);
+                    
+                    // Scaling factor for the AR image
+                    const arSize = handSize * 2.5; 
+
+                    // --- STREAMING_CHUNK:Drawing AR Object Standing on Palm... ---
+                    
+                    // Generate a gentle floating animation offset using time
+                    const time = Date.now();
+                    const floatOffset = Math.sin(time / 400) * (arSize * 0.05);
+
+                    ctx.save();
+                    // Move canvas origin to palm center
+                    ctx.translate(palmCenterX, palmCenterY);
+                    
+                    // Rotate canvas so the X axis aligns with the direction of the fingers
+                    // We subtract Math.PI / 2 (90 deg) so that the image is drawn perpendicular to the hand vector, making it "stand up"
+                    ctx.rotate(angle - Math.PI / 2);
+
+                    // Draw the image
+                    // X = -arSize/2 (Centers it horizontally relative to the vector)
+                    // Y = -arSize (Places the bottom of the image directly at the palm center)
+                    // floatOffset is subtracted from Y to make it bounce up and down slightly
+                    ctx.globalAlpha = 0.95; // Slight transparency for hologram effect
+                    ctx.drawImage(
+                        arImage, 
+                        -arSize / 2, 
+                        -arSize - floatOffset, 
+                        arSize, 
+                        arSize
+                    );
+                    
+                    ctx.restore();
+                }
+            } else {
+                if (isHandPresent) {
+                    isHandPresent = false;
+                    updateStatus("手が認識されていません。カメラに手を映してください。", false);
+                }
+            }
+            
+            ctx.restore();
+        });
+
+        // --- STREAMING_CHUNK:Starting the Application Loop... ---
+        
+        // Loop to continuously send frames to MediaPipe
+        async function processVideo() {
+            if (!videoElement.paused && !videoElement.ended) {
+                // Ensure we only process new frames
+                if (videoElement.currentTime !== lastVideoTime) {
+                    lastVideoTime = videoElement.currentTime;
+                    try {
+                        await hands.send({image: videoElement});
+                    } catch (e) {
+                        console.warn("Frame drop or processing error", e);
+                    }
+                }
+            }
+            // Loop using requestAnimationFrame for optimal performance
+            requestAnimationFrame(processVideo);
+        }
+
+        // Once the video stream loads, start processing loop
+        videoElement.addEventListener('loadeddata', () => {
+            processVideo();
+        });
+
+        // Initialize application on load
+        window.addEventListener('DOMContentLoaded', () => {
+            startCamera();
+        });
+
+    </script>
+</body>
+</html>
