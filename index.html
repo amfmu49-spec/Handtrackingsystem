@@ -77,16 +77,9 @@
                 </div>
                 <div>
                     <h1 class="text-white font-bold text-lg sm:text-xl tracking-wide neon-text">AR Hand Sync</h1>
-                    <p class="text-xs text-cyan-200/70 font-medium tracking-wider">PALM RECOGNITION ACTIVE</p>
+                    <p class="text-xs text-cyan-200/70 font-medium tracking-wider">画面タップで設定を開く</p>
                 </div>
             </div>
-            
-            <button id="switch_camera_btn" class="pointer-events-auto bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-400 hover:to-blue-400 text-white p-3 sm:px-5 sm:py-2.5 rounded-full font-semibold transition-all shadow-[0_0_15px_rgba(6,182,212,0.4)] hover:shadow-[0_0_25px_rgba(6,182,212,0.6)] flex items-center gap-2 active:scale-95">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                </svg>
-                <span class="hidden sm:inline">カメラ切替</span>
-            </button>
         </div>
 
         <!-- Notification / Instructions -->
@@ -96,64 +89,60 @@
         </div>
     </div>
 
+    <!-- Settings Modal -->
+    <div id="settings_modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md transition-opacity">
+        <div class="glass-panel p-6 rounded-2xl w-11/12 max-w-md shadow-2xl flex flex-col gap-5" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-center">
+                <h2 class="text-xl text-white font-bold">表示設定</h2>
+                <button id="close_settings_btn" class="text-gray-400 hover:text-white p-1 transition-colors">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <p class="text-sm text-gray-300">掌に立たせる画像を選択してください（PNG, GIF, JPG対応）</p>
+            
+            <div class="relative group">
+                <input type="file" id="image_upload" accept="image/png, image/gif, image/jpeg" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"/>
+                <div class="flex items-center justify-center w-full p-4 border-2 border-dashed border-cyan-500/50 rounded-xl bg-cyan-900/20 group-hover:bg-cyan-800/30 transition-colors">
+                    <span class="text-cyan-400 font-medium text-sm text-center" id="upload_label">タップして画像を選択</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         // --- Core Elements ---
         const videoElement = document.getElementById('input_video');
         const canvasElement = document.getElementById('output_canvas');
         const ctx = canvasElement.getContext('2d');
-        const switchCamBtn = document.getElementById('switch_camera_btn');
         const statusText = document.getElementById('status_text');
         const statusMessage = document.getElementById('status_message');
         const loadingSpinner = document.getElementById('loading_spinner');
+        
+        // New UI Elements
+        const settingsModal = document.getElementById('settings_modal');
+        const imageUpload = document.getElementById('image_upload');
+        const uploadLabel = document.getElementById('upload_label');
+        const closeSettingsBtn = document.getElementById('close_settings_btn');
 
         // --- State Variables ---
         let stream = null;
-        let isFrontCamera = false; // Default to Environment (Back) Camera
         let lastVideoTime = -1;
         let isModelLoaded = false;
         let isHandPresent = false;
-
-        // --- Generate Stylish AR Image (Holographic Crystal) ---
-        // Instead of relying on external links, we generate an SVG dynamically.
-        const arImage = new Image();
-        const svgContent = `
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 250">
-                <defs>
-                    <linearGradient id="crystalGrad" x1="50%" y1="0%" x2="50%" y2="100%">
-                        <stop offset="0%" stop-color="#00f2fe" stop-opacity="0.9" />
-                        <stop offset="50%" stop-color="#4facfe" stop-opacity="0.8" />
-                        <stop offset="100%" stop-color="#00215c" stop-opacity="0.4" />
-                    </linearGradient>
-                    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                        <feGaussianBlur stdDeviation="8" result="blur" />
-                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                    </filter>
-                </defs>
-                <!-- Base / Magic Circle -->
-                <ellipse cx="100" cy="220" rx="80" ry="20" fill="none" stroke="#00f2fe" stroke-width="4" filter="url(#glow)"/>
-                <ellipse cx="100" cy="220" rx="60" ry="10" fill="none" stroke="#4facfe" stroke-width="2" stroke-dasharray="10,5" opacity="0.8"/>
-                
-                <!-- Floating Crystal Object -->
-                <polygon points="100,20 160,100 100,180 40,100" fill="url(#crystalGrad)" filter="url(#glow)"/>
-                <polygon points="100,20 100,180 40,100" fill="#ffffff" opacity="0.3"/>
-                <polygon points="100,20 160,100 100,100" fill="#ffffff" opacity="0.5"/>
-                
-                <!-- Holographic Text -->
-                <text x="100" y="245" font-family="sans-serif" font-size="20" fill="#00f2fe" text-anchor="middle" font-weight="bold" filter="url(#glow)">AR LINK ESTABLISHED</text>
-            </svg>
-        `;
-        arImage.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgContent);
+        
+        // Image State
+        let hasUserImage = false;
+        const userImageElement = new Image();
 
         // --- STREAMING_CHUNK:Configuring Camera Setup... ---
         async function startCamera() {
-            // Stop existing stream tracks before switching
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
             }
 
             const constraints = {
                 video: {
-                    facingMode: isFrontCamera ? "user" : "environment",
+                    facingMode: "environment", // 外カメラ固定
                     width: { ideal: 1280 },
                     height: { ideal: 720 }
                 }
@@ -163,14 +152,9 @@
                 stream = await navigator.mediaDevices.getUserMedia(constraints);
                 videoElement.srcObject = stream;
                 
-                // Toggle mirror effect based on camera direction
-                if (isFrontCamera) {
-                    videoElement.classList.add('mirrored');
-                    canvasElement.classList.add('mirrored');
-                } else {
-                    videoElement.classList.remove('mirrored');
-                    canvasElement.classList.remove('mirrored');
-                }
+                // 常に外カメラなのでミラーリング解除
+                videoElement.classList.remove('mirrored');
+                canvasElement.classList.remove('mirrored');
 
                 videoElement.play();
                 
@@ -183,9 +167,33 @@
             }
         }
 
-        switchCamBtn.addEventListener('click', () => {
-            isFrontCamera = !isFrontCamera;
-            startCamera();
+        // 画面タップで設定を開く
+        document.body.addEventListener('click', (e) => {
+            if(e.target === document.body || e.target === canvasElement || e.target === videoElement || e.target.id === 'ui_layer') {
+                settingsModal.classList.remove('hidden');
+            }
+        });
+
+        // 設定を閉じる
+        closeSettingsBtn.addEventListener('click', () => {
+            settingsModal.classList.add('hidden');
+        });
+
+        // 画像アップロード処理
+        imageUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    userImageElement.src = event.target.result;
+                    userImageElement.onload = () => {
+                        hasUserImage = true;
+                        uploadLabel.textContent = file.name;
+                        settingsModal.classList.add('hidden');
+                    };
+                };
+                reader.readAsDataURL(file);
+            }
         });
 
         // Helper to update the floating status bubble
@@ -202,9 +210,9 @@
 
         hands.setOptions({
             maxNumHands: 2,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.6,
-            minTrackingConfidence: 0.6
+            modelComplexity: 0, // 追従性を上げるため 0 (Fast) に設定
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
         });
 
         // --- STREAMING_CHUNK:Implementing Results Processing & Rendering... ---
@@ -270,32 +278,28 @@
 
                     // --- STREAMING_CHUNK:Drawing AR Object Standing on Palm... ---
                     
-                    // Generate a gentle floating animation offset using time
-                    const time = Date.now();
-                    const floatOffset = Math.sin(time / 400) * (arSize * 0.05);
+                    if (hasUserImage && userImageElement.complete) {
+                        const time = Date.now();
+                        const floatOffset = Math.sin(time / 400) * (arSize * 0.05);
 
-                    ctx.save();
-                    // Move canvas origin to palm center
-                    ctx.translate(palmCenterX, palmCenterY);
-                    
-                    // Rotate canvas so the X axis aligns with the direction of the fingers
-                    // We subtract Math.PI / 2 (90 deg) so that the image is drawn perpendicular to the hand vector, making it "stand up"
-                    ctx.rotate(angle - Math.PI / 2);
+                        ctx.save();
+                        // Move canvas origin to palm center
+                        ctx.translate(palmCenterX, palmCenterY);
+                        
+                        // Rotate canvas so the X axis aligns with the direction of the fingers
+                        ctx.rotate(angle - Math.PI / 2);
 
-                    // Draw the image
-                    // X = -arSize/2 (Centers it horizontally relative to the vector)
-                    // Y = -arSize (Places the bottom of the image directly at the palm center)
-                    // floatOffset is subtracted from Y to make it bounce up and down slightly
-                    ctx.globalAlpha = 0.95; // Slight transparency for hologram effect
-                    ctx.drawImage(
-                        arImage, 
-                        -arSize / 2, 
-                        -arSize - floatOffset, 
-                        arSize, 
-                        arSize
-                    );
-                    
-                    ctx.restore();
+                        ctx.globalAlpha = 0.95;
+                        ctx.drawImage(
+                            userImageElement, 
+                            -arSize / 2, 
+                            -arSize - floatOffset, 
+                            arSize, 
+                            arSize
+                        );
+                        
+                        ctx.restore();
+                    }
                 }
             } else {
                 if (isHandPresent) {
