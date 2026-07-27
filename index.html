@@ -165,8 +165,8 @@
         hands.setOptions({
             maxNumHands: 1,
             modelComplexity: 0, // 0にすることで最高速度の追従性を実現
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
+            minDetectionConfidence: 0.4, // 水平など厳しい角度でも認識しやすく緩和
+            minTrackingConfidence: 0.4   // 追従性を維持しやすく緩和
         });
 
         hands.onResults((results) => {
@@ -208,14 +208,14 @@
                 let facing2D = (v1x * v2y) - (v1y * v2x);
                 if (handedness.label === 'Left') facing2D *= -1;
 
-                // チカチカ防止のための強力なヒステリシス
+                // チカチカ防止のための強力なヒステリシス（水平時により粘るように緩和）
                 if (typeof window.wasPalmFacing === 'undefined') window.wasPalmFacing = false;
                 
                 let isPalmFacing;
                 if (window.wasPalmFacing) {
-                    isPalmFacing = facing2D > -0.005; // 一度表になったら粘る
+                    isPalmFacing = facing2D > -0.03;  // 一度表になったら、ほぼ水平（横向き）でも粘る
                 } else {
-                    isPalmFacing = facing2D > 0.005;  // 完全に表を向くまで待つ
+                    isPalmFacing = facing2D > 0.002;  // わずかな表の面積でも表示を開始する
                 }
                 window.wasPalmFacing = isPalmFacing;
 
@@ -238,7 +238,14 @@
                     
                     const palmCenterX = (wristX + midX) / 2;
                     const palmCenterY = (wristY + midY) / 2;
-                    const rawSize = Math.hypot(midX - wristX, midY - wristY);
+                    
+                    // Z座標（奥行き）をピクセルスケールに変換
+                    const wristZ = p0.z * canvasElement.width;
+                    const midZ = landmarks[9].z * canvasElement.width;
+                    
+                    // 2D（画面上の見かけ）の距離ではなく、3D（奥行き込み）の距離でサイズを決定。
+                    // これにより、手がカメラ奥へ水平に倒れても画像が極端に小さくならない。
+                    const rawSize = Math.hypot(midX - wristX, midY - wristY, midZ - wristZ);
 
                     // 3DベクトルのZ成分を取得
                     const v1z = p5.z - p0.z;
