@@ -80,7 +80,7 @@
         <div class="glass-panel text-white px-4 py-3 rounded-2xl flex flex-col pointer-events-auto shadow-lg shadow-black/50">
             <h1 class="text-sm font-bold tracking-wider flex items-center gap-2">
                 AR HAND TRACKER
-                <span class="text-[10px] bg-indigo-500 px-2 py-0.5 rounded-full shadow-lg shadow-indigo-500/30">ver.3.1.0</span>
+                <span class="text-[10px] bg-indigo-500 px-2 py-0.5 rounded-full shadow-lg shadow-indigo-500/30">ver.3.1.1</span>
             </h1>
             <div id="status_message" class="text-xs text-gray-300 mt-2 flex items-center gap-2 transition-opacity duration-300">
                 <div id="loading_spinner" class="spinner"></div>
@@ -214,32 +214,62 @@
                     'fs': 0,
                     'rel': 0,
                     'modestbranding': 1,
-                    'autoplay': 0
+                    'autoplay': 0,
+                    'origin': window.location.origin, // エラー回避のための必須パラメータ
+                    'enablejsapi': 1
                 },
                 events: {
-                    'onReady': () => { isYtReady = true; console.log("YouTube Ready"); },
+                    'onReady': (event) => { 
+                        isYtReady = true; 
+                        console.log("YouTube Ready"); 
+                        // 音声による自動再生ブロック（エラー画面）を回避するため初期ミュート設定
+                        event.target.mute(); 
+                    },
                     'onStateChange': (event) => {
                         // 手が無い時に自動再生されそうになったら強制停止
                         if (event.data === YT.PlayerState.PLAYING && !isHandPresent) {
                             player.pauseVideo();
                         }
+                    },
+                    'onError': (event) => {
+                        console.error("YouTube Error:", event.data);
+                        let errorMsg = "YouTube側の制限により再生できません";
+                        if (event.data === 101 || event.data === 150) errorMsg = "外部サイトでの埋め込み再生が禁止された動画です";
+                        else if (event.data === 2) errorMsg = "無効なURLまたは検索キーワードです";
+                        
+                        // ボタンを赤色にしてエラーメッセージを表示
+                        ytSetBtn.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> <span class="text-xs">${errorMsg}</span>`;
+                        ytSetBtn.classList.remove('bg-indigo-600', 'bg-green-600');
+                        ytSetBtn.classList.add('bg-red-600');
+                        
+                        setTimeout(() => {
+                            ytSetBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg> 検索してトップ動画を設定';
+                            ytSetBtn.classList.remove('bg-red-600');
+                            ytSetBtn.classList.add('bg-indigo-600');
+                        }, 4000);
                     }
                 }
             });
         }
 
-        // URLからIDを抽出する関数
+        // URLからIDを抽出する関数（精度向上版）
         function extractVideoID(url) {
-            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([^#&?]*).*/;
+            const regExp = /^(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
             const match = url.match(regExp);
-            return (match && match[2].length === 11) ? match[2] : null;
+            return (match && match[1]) ? match[1] : null;
         }
 
         // YouTube 検索/設定ボタンの処理
         ytSetBtn.addEventListener('click', () => {
             const inputVal = ytUrlInput.value.trim();
             if (!inputVal) {
-                alert('キーワードかURLを入力してください');
+                // アラートを廃止し、ボタンテキストで警告
+                ytSetBtn.innerHTML = 'キーワードかURLを入力してください';
+                ytSetBtn.classList.replace('bg-indigo-600', 'bg-yellow-600');
+                setTimeout(() => {
+                    ytSetBtn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg> 検索してトップ動画を設定';
+                    ytSetBtn.classList.replace('bg-yellow-600', 'bg-indigo-600');
+                }, 2000);
                 return;
             }
 
