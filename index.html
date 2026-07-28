@@ -288,8 +288,8 @@
                 // 手の傾き（角度）を計算：手首(0) から 中指の付け根(9) へのベクトル
                 const dx = middleFingerMCP.x - wrist.x;
                 const dy = middleFingerMCP.y - wrist.y;
-                // 通常は縦向きですが、手を横にした時に動画が水平になるよう +90度 補正する
-                const angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
+                // 指先が「動画の右側」を向くように、角度をそのまま適用（余計な+90度補正を削除）
+                const angle = Math.atan2(dy, dx) * (180 / Math.PI);
 
                 // YouTubeコンテナの位置・サイズ・角度を更新
                 ytContainer.style.left = `${pixelX}px`;
