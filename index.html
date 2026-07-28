@@ -3,99 +3,88 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AR Hand Tracker (最終調整版)</title>
+    <title>AR Hand Tracker</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Inter', sans-serif; }
-        #output_canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; }
+        body { margin: 0; overflow: hidden; background: #000; }
+        #output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
         #yt_container {
-            position: absolute; z-index: 10;
-            transform-origin: 50% 100%; /* 枠の下端(手首寄り)を支点にする */
-            transition: width 0.1s, height 0.1s, transform 0.1s;
-            box-shadow: 0 15px 35px rgba(0,0,0,0.6);
-            border-radius: 12px; border: 2px solid rgba(255, 255, 255, 0.2);
-            overflow: hidden; background: #000; opacity: 0;
+            position: absolute;
+            transform-origin: 0% 50%; /* 手首支点固定 */
+            transition: transform 0.05s linear, width 0.05s, height 0.05s;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border-radius: 8px; overflow: hidden; background: #000; opacity: 0;
+            pointer-events: auto;
         }
-        #iframe_player { width: 100%; height: 100%; border: none; pointer-events: auto; }
-        .glass { background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(24px); border: 1px solid rgba(255, 255, 255, 0.2); }
+        #iframe_player { width: 100%; height: 100%; border: none; }
+        .glass { background: rgba(0,0,0,0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.2); }
     </style>
 </head>
 <body>
-    <div class="absolute top-4 left-4 z-50 glass text-white px-4 py-2 rounded-full font-bold text-xs shadow-lg">AR HAND TRACKER v6.0</div>
-    <div class="absolute bottom-8 left-0 right-0 z-50 text-center text-white text-sm opacity-80 px-4">動画をタップで音声ON</div>
-
+    <div id="ui" class="absolute top-4 left-4 z-50 glass text-white p-4 rounded-xl hidden">
+        <input type="text" id="url_input" placeholder="YouTube/TikTok URL" class="w-64 bg-black/50 p-2 rounded mb-2 block border border-white/20">
+        <label class="text-xs block mb-1">サイズ調整 (0.1 - 2.0)</label>
+        <input type="range" id="scale_slider" min="0.1" max="2.0" step="0.01" value="0.5" class="w-full">
+        <button id="save_btn" class="mt-4 w-full bg-blue-600 py-2 rounded">適用</button>
+    </div>
+    <div class="absolute bottom-4 left-4 text-white text-xs z-50">タップで設定 / TikTokは動画内タップで音ON</div>
     <canvas id="output_canvas"></canvas>
     <div id="yt_container"><iframe id="iframe_player" allow="autoplay; encrypted-media"></iframe></div>
 
-    <div id="settings_modal" class="fixed inset-0 z-[100] flex items-center justify-center hidden">
-        <div id="modal_bg" class="absolute inset-0 bg-black/40"></div>
-        <div class="relative glass rounded-3xl p-8 w-11/12 max-w-md text-white shadow-2xl">
-            <h2 class="text-xl font-bold mb-6">Settings</h2>
-            <input type="text" id="url_input" placeholder="動画URLを入力..." class="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 mb-6">
-            <label class="block text-sm mb-2">ベースサイズ微調整</label>
-            <input type="range" id="scale_slider" min="0.05" max="1.0" step="0.01" value="0.3" class="w-full mb-8">
-            <button id="save_btn" class="w-full bg-blue-600 py-3 rounded-xl font-bold">適用して閉じる</button>
-        </div>
-    </div>
-
     <script>
         const canvas = document.getElementById('output_canvas'), ctx = canvas.getContext('2d');
-        const ytContainer = document.getElementById('yt_container'), iframe = document.getElementById('iframe_player');
-        const settings = document.getElementById('settings_modal'), slider = document.getElementById('scale_slider');
+        const container = document.getElementById('yt_container'), iframe = document.getElementById('iframe_player');
+        let scaleBase = 0.5;
 
-        let scaleValue = 0.3;
-        canvas.addEventListener('click', () => settings.classList.remove('hidden'));
-        document.getElementById('modal_bg').addEventListener('click', () => settings.classList.add('hidden'));
-        slider.addEventListener('input', (e) => scaleValue = parseFloat(e.target.value));
-
+        canvas.addEventListener('click', () => document.getElementById('ui').classList.toggle('hidden'));
+        
         document.getElementById('save_btn').addEventListener('click', async () => {
-            const url = document.getElementById('url_input').value;
-            const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
-            const data = await res.json();
-            const idMatch = data.contents.match(/(?:video\/|v=)([\w-]{11,20})/);
-            if(idMatch) {
-                const isTikTok = url.includes('tiktok');
-                iframe.src = isTikTok ? `https://www.tiktok.com/embed/v2/${idMatch[1]}?autoplay=1` : `https://www.youtube.com/embed/${idMatch[1]}?autoplay=1&mute=0`;
-                settings.classList.add('hidden');
+            const input = document.getElementById('url_input').value;
+            scaleBase = parseFloat(document.getElementById('scale_slider').value);
+            
+            if (input.includes('tiktok.com')) {
+                const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(input)}`);
+                const data = await res.json();
+                const match = data.contents.match(/video\/(\d+)/);
+                iframe.src = match ? `https://www.tiktok.com/embed/v2/${match[1]}?autoplay=1` : "";
+            } else {
+                const id = input.match(/(?:v=|\/)([\w-]{11})/)?.[1];
+                iframe.src = id ? `https://www.youtube.com/embed/${id}?autoplay=1&mute=0` : "";
+            }
+            document.getElementById('ui').classList.add('hidden');
+        });
+
+        const hands = new Hands({locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`});
+        hands.setOptions({maxNumHands: 1, minDetectionConfidence: 0.7});
+        hands.onResults((res) => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(res.image, 0, 0, canvas.width, canvas.height);
+            
+            if (res.multiHandLandmarks?.[0]) {
+                const lm = res.multiHandLandmarks[0];
+                const dx = lm[12].x - lm[0].x, dy = lm[12].y - lm[0].y;
+                const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                
+                // 縦動画判定: 指先が天（-90度付近）を向いているか
+                const isVertical = Math.abs(angle + 90) < 45;
+                container.style.width = isVertical ? '225px' : '400px';
+                container.style.height = isVertical ? '400px' : '225px';
+                
+                // 遠近感モード: 距離に比例してサイズ変化
+                const scale = scaleBase * (dist / 0.3);
+                container.style.left = `${lm[0].x * window.innerWidth}px`;
+                container.style.top = `${lm[0].y * window.innerHeight}px`;
+                container.style.transform = `scale(${scale}) rotate(${angle}deg)`;
+                container.style.opacity = 1;
+            } else {
+                container.style.opacity = 0;
             }
         });
 
-        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-        hands.setOptions({maxNumHands: 1, minDetectionConfidence: 0.7});
-        hands.onResults((results) => {
-            canvas.width = window.innerWidth; canvas.height = window.innerHeight;
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-
-            if (results.multiHandLandmarks?.length > 0) {
-                const lm = results.multiHandLandmarks[0];
-                const wrist = lm[0], tip = lm[12], mcp = lm[9];
-                
-                const dx = tip.x - wrist.x, dy = tip.y - wrist.y;
-                const angle = Math.atan2(dy, dx) * (180 / Math.PI);
-                const isVertical = (angle > -130 && angle < -50);
-
-                ytContainer.style.width = isVertical ? '360px' : '640px';
-                ytContainer.style.height = isVertical ? '640px' : '360px';
-                
-                const dist = Math.sqrt(dx*dx + dy*dy);
-                const scale = scaleValue * (dist / 0.3);
-
-                ytContainer.style.left = `${wrist.x * canvas.width}px`;
-                ytContainer.style.top = `${wrist.y * canvas.height}px`;
-                ytContainer.style.transform = `scale(${scale}) rotate(${isVertical ? angle + 90 : angle}deg)`;
-                ytContainer.style.opacity = 1;
-            } else { ytContainer.style.opacity = 0; }
-        });
-
-        new Camera(document.getElementById('input_video'), {
-            onFrame: async () => await hands.send({image: document.getElementById('input_video')}),
-            facingMode: 'environment'
-        }).start();
+        new Camera(document.createElement('video'), { onFrame: async(img) => await hands.send({image: img}) }).start();
     </script>
-    <video id="input_video" style="display:none"></video>
 </body>
 </html>
