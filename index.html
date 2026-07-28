@@ -196,26 +196,49 @@
 
         depthModeCb.addEventListener('change', (e) => { isDepthMode = e.target.checked; });
 
-        // 短縮URLを解析してフルURLを取得する裏技的関数
+        // 短縮URLを解析してフルURLを取得する裏技的関数（超強化版）
         async function fetchTikTokFullUrl(shortUrl) {
             try {
-                // CORS制限を回避するため、無料のプロキシ(allorigins)を経由して対象ページのHTMLを取得
-                const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(shortUrl)}`;
-                const response = await fetch(proxyUrl);
-                const data = await response.json();
-                
-                if (data && data.contents) {
-                    // HTMLの中から本物の動画URL（canonicalタグ等）を探し出す
-                    const match = data.contents.match(/href="([^"]+tiktok\.com\/@[^/]+\/video\/\d+)"/);
-                    if (match && match[1]) {
-                        return match[1]; // 見つかった長いURLを返す
+                // 1. TikTokのoEmbed APIを使って動画IDを取得する（最も成功率が高い）
+                const oembedUrl = `https://www.tiktok.com/oembed?url=${shortUrl}`;
+                const proxyUrl1 = `https://api.allorigins.win/get?url=${encodeURIComponent(oembedUrl)}`;
+                const response1 = await fetch(proxyUrl1);
+                const data1 = await response1.json();
+                if (data1 && data1.contents) {
+                    const oembedData = JSON.parse(data1.contents);
+                    const match1 = oembedData.html.match(/data-video-id="(\d+)"/);
+                    if (match1 && match1[1]) {
+                        return `https://www.tiktok.com/@user/video/${match1[1]}`;
                     }
                 }
-                return null;
             } catch (err) {
-                console.error("URL解析エラー:", err);
-                return null;
+                console.warn("oEmbed解析失敗, 次のメソッドを試します", err);
             }
+
+            try {
+                // 2. HTML本体を取得してメタタグや裏側のデータを探す
+                const proxyUrl2 = `https://api.allorigins.win/get?url=${encodeURIComponent(shortUrl)}`;
+                const response2 = await fetch(proxyUrl2);
+                const data2 = await response2.json();
+                
+                if (data2 && data2.contents) {
+                    // canonical URL (正規のURL)
+                    let match = data2.contents.match(/<link[^>]+rel="canonical"[^>]+href="([^"]+)"/);
+                    if (match && match[1] && match[1].includes('/video/')) return match[1];
+                    
+                    // aweme_id (システム上の動画ID) を探す
+                    match = data2.contents.match(/"aweme_id":"(\d+)"/);
+                    if (match && match[1]) return `https://www.tiktok.com/@user/video/${match[1]}`;
+                    
+                    // 単純なURLのパターンマッチ
+                    match = data2.contents.match(/(https:\/\/(?:www\.)?tiktok\.com\/@[^/]+\/video\/\d+)/);
+                    if (match && match[1]) return match[1];
+                }
+            } catch (err) {
+                console.warn("HTML解析失敗:", err);
+            }
+
+            return null;
         }
 
         saveBtn.addEventListener('click', async () => {
