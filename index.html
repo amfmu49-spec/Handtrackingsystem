@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <meta name="referrer" content="origin">
-    <title>AR Hand Tracker - YouTube & TikTok (v4.0.0)</title>
+    <title>AR Hand Tracker - YouTube & TikTok (自動回転)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
@@ -27,11 +27,12 @@
             position: absolute; top: 0; left: 0;
             width: 100%; height: 100%; object-fit: cover; z-index: 1;
         }
+        
+        /* YouTube / TikTok コンテナ */
         #yt_container {
             position: absolute; z-index: 10;
-            /* 初期値はYouTube用の横長(16:9) */
-            width: 320px; height: 180px; 
-            transform-origin: center center;
+            width: 320px; height: 180px; /* 初期は横長 */
+            transform-origin: center center; /* 中心を軸に回転・拡大 */
             pointer-events: none;
             opacity: 0; 
             transition: opacity 0.2s ease, width 0.3s, height 0.3s;
@@ -43,6 +44,8 @@
             width: 100%; height: 100%; border: none;
             pointer-events: auto;
         }
+
+        /* ガラスモーフィングUI */
         .glass {
             background: rgba(25, 25, 35, 0.6);
             backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
@@ -72,35 +75,45 @@
 </head>
 <body>
     <div id="video_container">
+        <!-- バッジ表示 -->
         <div class="absolute top-4 left-4 z-50 glass-badge text-white px-4 py-2 rounded-full font-bold text-sm tracking-wider shadow-lg">
-            AR HAND TRACKER v4.0.0 (TT対応)
+            AR HAND TRACKER (Auto Rotate)
         </div>
+        
         <div class="absolute bottom-6 left-0 right-0 z-50 text-center pointer-events-none text-white text-sm font-medium opacity-75 drop-shadow-md">
-            画面をタップして設定を開く / YouTube音声をオン
+            画面をタップして設定 / 動画ミュート解除
         </div>
+        
         <video id="input_video" playsinline></video>
         <canvas id="output_canvas"></canvas>
+        
+        <!-- ホログラム枠 -->
         <div id="yt_container">
             <iframe id="video_player" src="" title="Video player" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
         </div>
     </div>
 
     <div id="settings_modal" class="fixed inset-0 z-[100] hidden flex-col items-center justify-center p-4">
+        <!-- 背景タップで閉じるためのレイヤー -->
         <div id="modal_backdrop" class="absolute inset-0 bg-black/60 transition-opacity"></div>
+        
         <div class="glass relative w-full max-w-sm rounded-3xl p-8 flex flex-col gap-6 text-white transform transition-all shadow-2xl">
             <h2 class="text-2xl font-extrabold tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
                 設定 / Settings
             </h2>
             
             <div class="flex flex-col gap-2">
-                <label class="text-sm font-medium text-gray-300">YouTube または TikTok URL</label>
-                <input type="text" id="url_input" placeholder="https://youtu.be/... または tiktok.com/..." class="glass-input p-4 rounded-xl text-sm w-full transition-all">
-                <p class="text-xs text-gray-400 mt-1">※TikTokはブラウザの「リンクをコピー」等から取得した(@ユーザー名/video/数字)を含むフルURLをご使用ください。</p>
+                <label class="text-sm font-medium text-gray-300">YouTube / TikTok URL</label>
+                <input type="text" id="url_input" placeholder="URLをペースト..." class="glass-input p-4 rounded-xl text-sm w-full transition-all">
+                <p class="text-[10px] text-gray-400 mt-1 leading-tight">
+                    ※TikTokはブラウザ等から「@ユーザー名/video/数字」を含むフルURLを取得してください。<br>
+                    ※手の傾き（縦/横）によって動画の向きは自動で回転します。
+                </p>
             </div>
 
             <div class="flex flex-col gap-2 mt-2">
                 <label class="text-sm font-medium text-gray-300 flex justify-between">
-                    <span>ホログラム基本サイズ</span>
+                    <span>基本サイズ</span>
                     <span id="scale_display">30%</span>
                 </label>
                 <input type="range" id="scale_slider" min="0.1" max="2.0" step="0.1" value="0.3" class="w-full accent-blue-500 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
@@ -108,12 +121,8 @@
 
             <div class="flex flex-col gap-3 mt-2 bg-black/30 p-3 rounded-xl border border-white/10">
                 <label class="flex items-center gap-3 cursor-pointer">
-                    <input type="checkbox" id="vertical_mode_cb" class="w-5 h-5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 bg-gray-700">
-                    <span class="text-sm font-medium text-gray-300">縦動画モード (指先を天に)</span>
-                </label>
-                <label class="flex items-center gap-3 cursor-pointer">
                     <input type="checkbox" id="depth_mode_cb" class="w-5 h-5 rounded border-gray-600 text-blue-500 focus:ring-blue-500 bg-gray-700">
-                    <span class="text-sm font-medium text-gray-300">遠近感モード (距離でサイズ変化)</span>
+                    <span class="text-sm font-medium text-gray-300">遠近感モード (カメラとの距離でサイズ変化)</span>
                 </label>
             </div>
 
@@ -136,28 +145,33 @@
         const scaleSlider = document.getElementById('scale_slider');
         const scaleDisplay = document.getElementById('scale_display');
         const saveBtn = document.getElementById('save_btn');
-        const verticalModeCb = document.getElementById('vertical_mode_cb');
         const depthModeCb = document.getElementById('depth_mode_cb');
 
-        let scaleValue = parseFloat(scaleSlider.value);
+        let scaleValue = 0.3; // 初期サイズ30%
         let isProcessing = false;
-        let isVerticalMode = false;
         let isDepthMode = false;
-        let currentPlatform = 'youtube'; // 再生中のプラットフォームを記憶
+        let currentPlatform = 'youtube';
+        let hasInteracted = false;
+        
+        // 手の向き状態管理（スマホの自動回転機能と同じ仕組み）
+        let handPosture = 'horizontal'; 
 
         const initialVideoId = "Q_B299n02qI";
         const originUrl = window.location.origin || 'https://google.com';
+        // 初期はミュート(mute=1)で開始
         iframePlayer.src = `https://www.youtube.com/embed/${initialVideoId}?enablejsapi=1&autoplay=1&mute=1&loop=1&playlist=${initialVideoId}&origin=${originUrl}`;
 
-        // 背景タップで設定を開き、YouTubeならミュートを解除
+        // 背景タップ処理（設定を開く＆ミュート解除）
         canvasElement.addEventListener('click', () => {
             settingsModal.classList.remove('hidden');
             settingsModal.classList.add('flex');
             
-            // YouTubeの場合のみAPIでミュート解除コマンドを送信
-            if (currentPlatform === 'youtube' && iframePlayer && iframePlayer.contentWindow) {
-                iframePlayer.contentWindow.postMessage(JSON.stringify({ "event": "command", "func": "unMute", "args": [] }), "*");
-                iframePlayer.contentWindow.postMessage(JSON.stringify({ "event": "command", "func": "setVolume", "args": [100] }), "*");
+            if (!hasInteracted && currentPlatform === 'youtube') {
+                hasInteracted = true;
+                if (iframePlayer.contentWindow) {
+                    iframePlayer.contentWindow.postMessage(JSON.stringify({ "event": "command", "func": "unMute", "args": [] }), "*");
+                    iframePlayer.contentWindow.postMessage(JSON.stringify({ "event": "command", "func": "setVolume", "args": [100] }), "*");
+                }
             }
         });
 
@@ -172,48 +186,38 @@
             scaleDisplay.textContent = Math.round(scaleValue * 100) + '%';
         });
 
-        verticalModeCb.addEventListener('change', (e) => { isVerticalMode = e.target.checked; });
         depthModeCb.addEventListener('change', (e) => { isDepthMode = e.target.checked; });
 
         saveBtn.addEventListener('click', () => {
             let url = urlInput.value.trim();
             if (url) {
-                // YouTubeの正規表現
                 const ytRegExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-                // TikTokの正規表現 (例: tiktok.com/@username/video/123456789)
-                const ttRegExp = /tiktok\.com\/@[^\/]+\/video\/(\d+)/;
-
+                // URLの形が少し崩れていても「video/数字」または「v/数字」があればIDを抽出する強固な判定
+                const ttRegExp = /(?:video|v)\/(\d{15,})/;
+                
                 const ytMatch = url.match(ytRegExp);
                 const ttMatch = url.match(ttRegExp);
 
                 if (ytMatch && ytMatch[2].length === 11) {
-                    // --- YouTubeとして処理 ---
                     currentPlatform = 'youtube';
                     const videoId = ytMatch[2];
+                    // ユーザー操作後なので mute=0 で再生
                     iframePlayer.src = `https://www.youtube.com/embed/${videoId}?enablejsapi=1&autoplay=1&mute=0&loop=1&playlist=${videoId}&origin=${originUrl}`;
-                    
-                    // 横長(16:9)枠に変更
                     ytContainer.style.width = '320px';
                     ytContainer.style.height = '180px';
-                    
                 } else if (ttMatch && ttMatch[1]) {
-                    // --- TikTokとして処理 ---
                     currentPlatform = 'tiktok';
                     const videoId = ttMatch[1];
-                    // TikTokのiframe用埋め込みURL
                     iframePlayer.src = `https://www.tiktok.com/embed/v2/${videoId}`;
-                    
-                    // 縦長(9:16)枠に変更
                     ytContainer.style.width = '180px';
                     ytContainer.style.height = '320px';
-                    
-                    // TikTokは縦動画なので、自動的に「縦動画モード」をオンにする親切設計
-                    isVerticalMode = true;
-                    verticalModeCb.checked = true;
-                    
+                } else if (url.includes('vt.tiktok.com') || url.includes('vm.tiktok.com')) {
+                    // 短縮URLの場合は具体的な解決策を提示
+                    alert("【TikTokの短縮URLについて】\nvt.tiktok.com などのアプリからコピーした短いURLは直接読み込めません。\n\nお手数ですが、一度SafariやChromeなどのブラウザでそのURLを開き、アドレスバーに表示された『長いURL（video/数字 が含まれるもの）』をコピーして貼り付けてください。");
+                    return;
                 } else {
-                    alert("未対応のURLです。YouTubeか、TikTokのフルURL(video/数字を含むもの)をご入力ください。");
-                    return; // エラー時はモーダルを閉じない
+                    alert("未対応のURLです。YouTubeのURL、またはTikTokのフルURL(video/数字を含むもの)を入力してください。");
+                    return; 
                 }
             }
             settingsModal.classList.add('hidden');
@@ -242,47 +246,65 @@
         hands.onResults((results) => {
             canvasCtx.save();
             canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            // カメラ映像をキャンバスに描画（外カメラ）
             canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height); 
 
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 const landmarks = results.multiHandLandmarks[0];
+                
+                // 骨組み（ポインタ）を描画
                 drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#FF3B30', lineWidth: 4}); 
                 drawLandmarks(canvasCtx, landmarks, {color: '#34C759', lineWidth: 2, radius: 4}); 
 
                 const wrist = landmarks[0];
                 const middleFingerMCP = landmarks[9];
                 
+                // 位置の計算（手のひらの中央）
                 const palmX = (wrist.x + middleFingerMCP.x) / 2;
                 const palmY = (wrist.y + middleFingerMCP.y) / 2;
                 const pixelX = palmX * canvasElement.width;
                 const pixelY = palmY * canvasElement.height;
 
+                // 角度の計算
                 const dx = middleFingerMCP.x - wrist.x;
                 const dy = middleFingerMCP.y - wrist.y;
-                
                 let angle = Math.atan2(dy, dx) * (180 / Math.PI);
-                
-                // 縦動画モードONの時のみ、指先が上になるよう90度補正
-                if (isVerticalMode) {
-                    angle += 90; 
+                let absAngle = Math.abs(angle);
+
+                // --- スマホ風の自動回転判定（ヒステリシス付き） ---
+                if (handPosture === 'horizontal') {
+                    // 横から縦への切り替え（少し深めに傾けたら切り替える）
+                    if (absAngle > 55 && absAngle < 125) {
+                        handPosture = 'vertical';
+                    }
+                } else {
+                    // 縦から横への切り替え（元に戻したら切り替える）
+                    if (absAngle < 35 || absAngle > 145) {
+                        handPosture = 'horizontal';
+                    }
                 }
 
+                // 表示用の最終角度を決定
+                let finalAngle = angle;
+                if (handPosture === 'vertical') {
+                    // 縦持ちの時は、動画の「頭」を指先に向ける
+                    finalAngle += 90; 
+                }
+
+                // サイズと遠近感の計算
                 let finalScale = scaleValue;
-                
-                // 遠近感モードONの時、画面上の手のピクセル幅（手首〜中指付け根）を計算して倍率を変える
                 if (isDepthMode) {
                     const pixelDx = dx * canvasElement.width;
                     const pixelDy = dy * canvasElement.height;
                     const pixelDistance = Math.sqrt(pixelDx * pixelDx + pixelDy * pixelDy);
-                    
                     const baseDistance = 100;
-                    const depthMultiplier = pixelDistance / baseDistance;
-                    finalScale = scaleValue * depthMultiplier;
+                    finalScale = scaleValue * (pixelDistance / baseDistance);
                 }
 
+                // コンテナにスタイルを適用
                 ytContainer.style.left = `${pixelX}px`;
                 ytContainer.style.top = `${pixelY}px`;
-                ytContainer.style.transform = `translate(-50%, -50%) scale(${finalScale}) rotate(${angle}deg)`;
+                ytContainer.style.transform = `translate(-50%, -50%) scale(${finalScale}) rotate(${finalAngle}deg)`;
                 ytContainer.style.opacity = 1;
 
             } else {
@@ -306,12 +328,15 @@
             },
             width: 1280,
             height: 720,
-            facingMode: 'environment' 
+            facingMode: 'environment' // アウトカメラ
         });
 
-        camera.start().catch(err => {
-            console.error("Camera access failed:", err);
-            alert("カメラへのアクセスが拒否されたか、利用できません。");
+        // AIの初期化が終わってからカメラを起動する（WASMクラッシュ対策）
+        hands.initialize().then(() => {
+            camera.start().catch(err => {
+                console.error("Camera access failed:", err);
+                alert("カメラへのアクセスが拒否されたか、利用できません。");
+            });
         });
     </script>
 </body>
