@@ -3,114 +3,118 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="referrer" content="no-referrer-when-downgrade">
-    <title>AR Hand Tracker</title>
-    
+    <title>AR Hand Tracker ver.3.2.2</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-    
     <style>
         body { margin: 0; overflow: hidden; background-color: #0f172a; font-family: 'Inter', sans-serif; }
         .layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
-        .glass-panel { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
-        .glass-modal { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.1); }
-        input[type=range] { -webkit-appearance: none; background: transparent; }
-        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 20px; width: 20px; border-radius: 50%; background: #6366f1; cursor: pointer; margin-top: -8px; box-shadow: 0 0 10px rgba(99, 102, 241, 0.5); }
-        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; cursor: pointer; background: #334155; border-radius: 2px; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .glass-panel { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
         .spinner { border: 3px solid rgba(255,255,255,0.1); border-left-color: #6366f1; border-radius: 50%; width: 16px; height: 16px; animation: spin 1s linear infinite; }
-        #yt_wrapper { position: absolute; left: 0; top: 0; width: 640px; height: 360px; margin-left: -640px; margin-top: -180px; transform-origin: right center; pointer-events: none; opacity: 0; z-index: 5; border-radius: 12px; overflow: hidden; box-shadow: 0 15px 35px rgba(0,0,0,0.6); transition: opacity 0.3s ease; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #yt_wrapper { position: absolute; left: 0; top: 0; width: 320px; height: 180px; pointer-events: none; opacity: 0; z-index: 5; transition: opacity 0.3s ease; }
     </style>
 </head>
 <body class="relative w-full h-screen flex justify-center items-center">
     <video id="input_video" class="hidden" autoplay playsinline></video>
     <canvas id="output_canvas" class="layer"></canvas>
-    <div id="yt_wrapper"><iframe id="youtube_player" width="100%" height="100%" frameborder="0" allow="autoplay; encrypted-media" referrerpolicy="no-referrer-when-downgrade"></iframe></div>
+    <div id="yt_wrapper"><iframe id="youtube_player" width="100%" height="100%" frameborder="0" allow="autoplay; encrypted-media" referrerpolicy="strict-origin-when-cross-origin"></iframe></div>
 
-    <div id="ui_layer" class="absolute top-0 left-0 w-full p-4 flex justify-between items-start pointer-events-none" style="z-index: 10;">
-        <div class="glass-panel text-white px-4 py-3 rounded-2xl flex flex-col pointer-events-auto shadow-lg">
-            <h1 class="text-sm font-bold tracking-wider">AR HAND TRACKER <span class="text-[10px] bg-indigo-500 px-2 py-0.5 rounded-full">ver.3.2.1</span></h1>
-            <div id="status_message" class="text-xs text-gray-300 mt-2 flex items-center gap-2"><div id="loading_spinner" class="spinner"></div><span id="status_text">読み込み中...</span></div>
+    <div class="absolute top-4 left-4 z-20">
+        <div class="glass-panel text-white px-4 py-3 rounded-2xl flex flex-col shadow-lg">
+            <h1 class="text-sm font-bold">AR HAND TRACKER <span class="text-[10px] bg-indigo-500 px-2 py-1 rounded-full">v3.2.2</span></h1>
+            <div id="status_message" class="text-xs text-gray-300 mt-2 flex items-center gap-2"><div id="loading_spinner" class="spinner"></div><span id="status_text">カメラを起動中...</span></div>
         </div>
     </div>
 
-    <div id="settings_trigger" class="absolute inset-0 cursor-pointer" style="z-index: 2;"></div>
+    <!-- UI Overlay for Click -->
+    <div id="settings_trigger" class="absolute inset-0 z-10 cursor-pointer"></div>
 
-    <div id="settings_modal" class="hidden absolute inset-0 bg-black/70 flex justify-center items-center backdrop-blur-sm" style="z-index: 50;">
-        <div class="glass-modal text-white p-6 rounded-3xl w-11/12 max-w-sm flex flex-col gap-4" id="settings_content">
-            <div class="flex justify-between items-center pb-2">
-                <h2 class="text-lg font-bold">設定</h2>
-                <button id="close_modal_btn" class="text-gray-400 hover:text-white">閉じる</button>
-            </div>
-            <div class="flex border-b border-gray-700 mb-2">
-                <button id="tab_image" class="flex-1 py-2 text-sm font-bold border-b-2 border-indigo-500 text-indigo-400">画像</button>
-                <button id="tab_youtube" class="flex-1 py-2 text-sm font-bold border-b-2 border-transparent text-gray-400">YouTube</button>
-            </div>
-            <div id="content_image" class="flex flex-col gap-2">
-                <label for="image_upload" class="flex items-center justify-center w-full p-4 border-2 border-dashed border-gray-600 rounded-xl cursor-pointer">画像アップロード</label>
-                <input type="file" id="image_upload" class="hidden" accept="image/*">
-            </div>
-            <div id="content_youtube" class="hidden flex flex-col gap-3">
-                <input type="text" id="youtube_url" placeholder="URLまたは検索ワード" class="w-full bg-gray-800 text-white border border-gray-600 rounded-lg px-3 py-2 text-sm">
-                <button id="youtube_set_btn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-lg text-sm font-bold">検索して再生</button>
-            </div>
-            <hr class="border-gray-700 my-1">
-            <div class="flex flex-col gap-3">
-                <label class="text-sm text-gray-300 font-semibold">表示サイズ</label>
-                <input type="range" id="scale_slider" min="0.2" max="3" step="0.1" value="1">
-                <label class="text-sm text-gray-300 font-semibold">3D立体感</label>
-                <input type="range" id="tilt_slider" min="0" max="1" step="0.1" value="0.6">
-            </div>
+    <div id="settings_modal" class="hidden absolute inset-0 z-50 bg-black/70 flex justify-center items-center backdrop-blur-sm">
+        <div class="glass-panel text-white p-6 rounded-3xl w-11/12 max-w-sm flex flex-col gap-4">
+            <h2 class="text-lg font-bold">設定</h2>
+            <input type="text" id="youtube_url" placeholder="YouTube動画URL" class="w-full bg-gray-800 border border-gray-600 rounded-lg px-3 py-2 text-sm">
+            <button id="youtube_set_btn" class="w-full bg-indigo-600 py-2 rounded-lg text-sm font-bold">設定して再生</button>
+            <button id="close_btn" class="text-gray-400 text-sm mt-2">閉じる</button>
         </div>
     </div>
 
     <script>
+        // 1. YouTube API Load
+        let player, isYtReady = false;
         var tag = document.createElement('script');
         tag.src = "https://www.youtube.com/iframe_api";
         document.body.appendChild(tag);
-        
-        let player, isYtReady = false;
-        function onYouTubeIframeAPIReady() {
+
+        window.onYouTubeIframeAPIReady = () => {
             player = new YT.Player('youtube_player', {
                 events: {
-                    'onReady': () => { isYtReady = true; console.log("YouTube Ready"); },
-                    'onError': (e) => console.error("YT Error:", e.data)
+                    'onReady': () => { isYtReady = true; console.log("YT Ready"); }
                 }
             });
-        }
+        };
 
-        const settingsTrigger = document.getElementById('settings_trigger');
-        const settingsModal = document.getElementById('settings_modal');
-        const ytSetBtn = document.getElementById('youtube_set_btn');
-        const ytUrlInput = document.getElementById('youtube_url');
+        // 2. MediaPipe Hands
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const statusText = document.getElementById('status_text');
+        const spinner = document.getElementById('loading_spinner');
         const ytWrapper = document.getElementById('yt_wrapper');
 
-        settingsTrigger.addEventListener('click', () => settingsModal.classList.remove('hidden'));
-        document.getElementById('close_modal_btn').addEventListener('click', () => settingsModal.classList.add('hidden'));
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+        hands.onResults(onResults);
 
-        ytSetBtn.addEventListener('click', () => {
-            const val = ytUrlInput.value.trim();
-            if (!val) return;
-            if (!isYtReady) {
-                alert("YouTubeの準備中...");
-                return;
-            }
-            ytSetBtn.textContent = "読み込み中...";
-            const reg = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/ ]{11})/;
-            const match = val.match(reg);
-            if (match) {
-                player.loadVideoById(match[1]);
-            } else {
-                player.loadPlaylist({ list: val, listType: 'search', index: 0 });
-            }
-            setTimeout(() => { ytSetBtn.textContent = "検索して再生"; }, 2000);
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 1280, height: 720
+        });
+        camera.start().then(() => {
+            statusText.textContent = "準備完了";
+            spinner.classList.add('hidden');
         });
 
-        // カメラとMediaPipeの初期化ロジックは以前の通り...
-        // ※コード簡略化のため省略していますが、以前の実装を引き継いでいます
+        function onResults(results) {
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                const wrist = landmarks[0];
+                const middleFinger = landmarks[9];
+                
+                // Calculate 3D position
+                const x = middleFinger.x * canvasElement.width;
+                const y = middleFinger.y * canvasElement.height;
+                
+                if (isYtReady) {
+                    ytWrapper.style.opacity = "1";
+                    ytWrapper.style.pointerEvents = "auto";
+                    ytWrapper.style.left = `${x}px`;
+                    ytWrapper.style.top = `${y}px`;
+                    ytWrapper.style.transform = "rotate(-90deg) translate(-50%, -50%)"; // 横向き対応
+                }
+            } else {
+                ytWrapper.style.opacity = "0";
+            }
+        }
+
+        // UI Logic
+        document.getElementById('settings_trigger').addEventListener('click', () => document.getElementById('settings_modal').classList.remove('hidden'));
+        document.getElementById('close_btn').addEventListener('click', () => document.getElementById('settings_modal').classList.add('hidden'));
+        document.getElementById('youtube_set_btn').addEventListener('click', () => {
+            const url = document.getElementById('youtube_url').value;
+            const match = url.match(/(?:v=|\/)([a-zA-Z0-9_-]{11})/);
+            if(match && player) {
+                player.loadVideoById(match[1]);
+                document.getElementById('settings_modal').classList.add('hidden');
+            } else {
+                alert("正しいYouTube URLを入力してください");
+            }
+        });
     </script>
 </body>
 </html>
