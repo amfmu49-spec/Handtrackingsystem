@@ -3,365 +3,99 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AR Hand Tracker (スマート回転・遠近常時版)</title>
+    <title>AR Hand Tracker (最終調整版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     <style>
         body { margin: 0; overflow: hidden; background-color: #000; font-family: 'Inter', sans-serif; }
-        
-        #output_canvas {
-            position: absolute;
-            top: 0; left: 0;
-            width: 100vw; height: 100vh;
-            object-fit: cover;
-            z-index: 1;
-        }
-
-        /* ホログラム枠のスタイル */
+        #output_canvas { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; object-fit: cover; z-index: 1; }
         #yt_container {
-            position: absolute;
-            z-index: 10;
-            /* 初期サイズ（後でJSで上書きされます） */
-            width: 640px; 
-            height: 360px;
-            /* 中心を基準に配置・回転・スケール */
-            transform-origin: center center;
-            pointer-events: auto; /* タップ可能にする */
-            opacity: 0; 
-            transition: opacity 0.3s ease, width 0.3s ease, height 0.3s ease;
+            position: absolute; z-index: 10;
+            transform-origin: 50% 100%; /* 枠の下端(手首寄り)を支点にする */
+            transition: width 0.1s, height 0.1s, transform 0.1s;
             box-shadow: 0 15px 35px rgba(0,0,0,0.6);
-            border-radius: 12px;
-            border: 2px solid rgba(255, 255, 255, 0.2);
-            overflow: hidden;
-            background: #000;
+            border-radius: 12px; border: 2px solid rgba(255, 255, 255, 0.2);
+            overflow: hidden; background: #000; opacity: 0;
         }
-
-        #iframe_player {
-            width: 100%; height: 100%; border: none;
-        }
-
-        /* 美しいガラスモーフィングデザイン */
-        .glass {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            border-top: 1px solid rgba(255, 255, 255, 0.4);
-            border-left: 1px solid rgba(255, 255, 255, 0.3);
-            border-right: 1px solid rgba(255, 255, 255, 0.1);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 25px 45px rgba(0, 0, 0, 0.2);
-        }
-
-        /* 入力欄のリッチ化 */
-        .glass-input {
-            background: rgba(0, 0, 0, 0.4);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            color: #fff;
-        }
-        .glass-input:focus {
-            background: rgba(0, 0, 0, 0.6);
-            border-color: rgba(59, 130, 246, 0.8);
-            box-shadow: 0 0 12px rgba(59, 130, 246, 0.5);
-            outline: none;
-        }
+        #iframe_player { width: 100%; height: 100%; border: none; pointer-events: auto; }
+        .glass { background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(24px); border: 1px solid rgba(255, 255, 255, 0.2); }
     </style>
 </head>
 <body>
-    <!-- 左上のバージョンバッジ -->
-    <div class="absolute top-4 left-4 z-50 glass text-white px-4 py-2 rounded-full font-bold text-xs tracking-wider shadow-lg">
-        AR HAND TRACKER v5.0 (スマート回転)
-    </div>
-    
-    <!-- 画面下部の案内テキスト -->
-    <div class="absolute bottom-8 left-0 right-0 z-50 text-center pointer-events-none text-white text-sm font-medium opacity-80 drop-shadow-lg px-4">
-        画面の空きをタップで設定を開く<br>
-        <span class="text-blue-300">TikTokは浮かんだ動画を直接タップで音声ON</span>
-    </div>
+    <div class="absolute top-4 left-4 z-50 glass text-white px-4 py-2 rounded-full font-bold text-xs shadow-lg">AR HAND TRACKER v6.0</div>
+    <div class="absolute bottom-8 left-0 right-0 z-50 text-center text-white text-sm opacity-80 px-4">動画をタップで音声ON</div>
 
-    <!-- メディアパイプ用の隠しビデオと、描画用キャンバス -->
-    <video id="input_video" style="display:none" playsinline></video>
     <canvas id="output_canvas"></canvas>
-    
-    <!-- ホログラム枠 -->
-    <div id="yt_container">
-        <iframe id="iframe_player" allow="autoplay; encrypted-media" src=""></iframe>
-    </div>
+    <div id="yt_container"><iframe id="iframe_player" allow="autoplay; encrypted-media"></iframe></div>
 
-    <!-- 設定モーダル（初期状態は非表示） -->
     <div id="settings_modal" class="fixed inset-0 z-[100] flex items-center justify-center hidden">
-        <!-- 背景の暗転（ここをタップで閉じる） -->
-        <div id="modal_bg" class="absolute inset-0 bg-black bg-opacity-40 transition-opacity"></div>
-        
-        <!-- モーダル本体 -->
-        <div class="relative glass rounded-3xl p-8 w-11/12 max-w-md mx-auto text-white transform transition-all shadow-[0_0_40px_rgba(59,130,246,0.3)]">
-            <h2 class="text-2xl font-extrabold mb-6 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
-                Hologram Settings
-            </h2>
-            
-            <!-- URL入力 -->
-            <div class="mb-6">
-                <label class="block text-sm font-medium text-gray-300 mb-2">動画URL (YouTube / TikTok)</label>
-                <input type="text" id="url_input" placeholder="URLを貼り付け..." class="w-full glass-input rounded-xl px-4 py-3 transition-all">
-                <p id="error_msg" class="text-red-400 text-xs mt-2 hidden"></p>
-                <p id="loading_msg" class="text-blue-300 text-xs mt-2 hidden animate-pulse">URLを解析中...</p>
-            </div>
-
-            <!-- サイズ調整スライダー -->
-            <div class="flex flex-col gap-2 mb-6">
-                <label class="text-sm font-medium text-gray-300 flex justify-between">
-                    <span>ベースサイズ (遠近連動)</span>
-                    <span id="scale_display">30%</span>
-                </label>
-                <!-- 初期値30% -->
-                <input type="range" id="scale_slider" min="0.1" max="2.0" step="0.1" value="0.3" class="w-full accent-blue-500 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
-            </div>
-
-            <!-- 適用ボタン -->
-            <button id="save_btn" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold py-4 rounded-xl shadow-[0_0_15px_rgba(59,130,246,0.5)] transition-all active:scale-95 flex items-center justify-center">
-                <span>適用して閉じる</span>
-            </button>
+        <div id="modal_bg" class="absolute inset-0 bg-black/40"></div>
+        <div class="relative glass rounded-3xl p-8 w-11/12 max-w-md text-white shadow-2xl">
+            <h2 class="text-xl font-bold mb-6">Settings</h2>
+            <input type="text" id="url_input" placeholder="動画URLを入力..." class="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 mb-6">
+            <label class="block text-sm mb-2">ベースサイズ微調整</label>
+            <input type="range" id="scale_slider" min="0.05" max="1.0" step="0.01" value="0.3" class="w-full mb-8">
+            <button id="save_btn" class="w-full bg-blue-600 py-3 rounded-xl font-bold">適用して閉じる</button>
         </div>
     </div>
 
-    <!-- カスタムメッセージボックス -->
-    <div id="message_box" class="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-[200] glass rounded-2xl p-6 text-white hidden flex-col items-center max-w-sm w-[90%] text-center shadow-2xl">
-        <p id="message_text" class="mb-4 font-medium"></p>
-        <button id="message_close" class="bg-blue-600 px-6 py-2 rounded-lg font-bold">OK</button>
-    </div>
-
     <script>
-        const videoElement = document.getElementById('input_video');
-        const canvasElement = document.getElementById('output_canvas');
-        const canvasCtx = canvasElement.getContext('2d');
-        const ytContainer = document.getElementById('yt_container');
-        const iframePlayer = document.getElementById('iframe_player');
-        
-        const settingsModal = document.getElementById('settings_modal');
-        const modalBg = document.getElementById('modal_bg');
-        const urlInput = document.getElementById('url_input');
-        const scaleSlider = document.getElementById('scale_slider');
-        const scaleDisplay = document.getElementById('scale_display');
-        const saveBtn = document.getElementById('save_btn');
-        const errorMsg = document.getElementById('error_msg');
-        const loadingMsg = document.getElementById('loading_msg');
+        const canvas = document.getElementById('output_canvas'), ctx = canvas.getContext('2d');
+        const ytContainer = document.getElementById('yt_container'), iframe = document.getElementById('iframe_player');
+        const settings = document.getElementById('settings_modal'), slider = document.getElementById('scale_slider');
 
-        let scaleValue = 0.3; // スライダーの初期値
-        let handPosture = 'horizontal'; // スマート回転用の状態保持（horizontal か vertical か）
+        let scaleValue = 0.3;
+        canvas.addEventListener('click', () => settings.classList.remove('hidden'));
+        document.getElementById('modal_bg').addEventListener('click', () => settings.classList.add('hidden'));
+        slider.addEventListener('input', (e) => scaleValue = parseFloat(e.target.value));
 
-        // メッセージボックス表示関数
-        function showMessage(text) {
-            document.getElementById('message_text').textContent = text;
-            document.getElementById('message_box').classList.remove('hidden');
-            document.getElementById('message_box').classList.add('flex');
-        }
-        document.getElementById('message_close').addEventListener('click', () => {
-            document.getElementById('message_box').classList.add('hidden');
-            document.getElementById('message_box').classList.remove('flex');
-        });
-
-        // 画面の空き（キャンバス）をタップで設定を開く
-        canvasElement.addEventListener('click', () => {
-            settingsModal.classList.remove('hidden');
-        });
-        
-        // モーダルの背景タップで閉じる
-        modalBg.addEventListener('click', () => {
-            settingsModal.classList.add('hidden');
-        });
-
-        // スライダーの値表示更新
-        scaleSlider.addEventListener('input', (e) => {
-            scaleValue = parseFloat(e.target.value);
-            scaleDisplay.textContent = Math.round(scaleValue * 100) + '%';
-        });
-
-        // TikTokなどのURLからIDを抜き出す高度な解析関数
-        async function resolveVideoUrl(url) {
-            url = url.trim();
-            if (!url) return null;
-
-            // 1. YouTubeの判定
-            const ytMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
-            if (ytMatch && ytMatch[1]) {
-                return { type: 'youtube', id: ytMatch[1] };
-            }
-
-            // 2. TikTok フルURLの判定
-            const ttFullMatch = url.match(/tiktok\.com\/@.*\/video\/(\d+)/);
-            if (ttFullMatch && ttFullMatch[1]) {
-                return { type: 'tiktok', id: ttFullMatch[1] };
-            }
-
-            // 3. TikTok 短縮URL (vt.tiktok.com) の裏技解析
-            if (url.includes('vt.tiktok.com') || url.includes('vm.tiktok.com')) {
-                try {
-                    // CORS制限を回避するため、無料のAllOriginsプロキシを使用してリダイレクト先やHTMLを取得
-                    const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-                    const response = await fetch(proxyUrl);
-                    const data = await response.json();
-                    
-                    // 取得したデータ（HTML文字列など）から動画IDの数字19桁を強引に抽出
-                    const idMatch = data.contents.match(/video\/(\d+)/);
-                    if (idMatch && idMatch[1]) {
-                        return { type: 'tiktok', id: idMatch[1] };
-                    }
-                } catch (e) {
-                    console.error("解析エラー:", e);
-                }
-            }
-
-            return null; // どれにも該当しない、または解析失敗
-        }
-
-        // 保存ボタンクリック時の処理
-        saveBtn.addEventListener('click', async () => {
-            const rawUrl = urlInput.value;
-            if (!rawUrl) {
-                settingsModal.classList.add('hidden');
-                return;
-            }
-
-            errorMsg.classList.add('hidden');
-            loadingMsg.classList.remove('hidden');
-            saveBtn.disabled = true;
-
-            const videoInfo = await resolveVideoUrl(rawUrl);
-
-            loadingMsg.classList.add('hidden');
-            saveBtn.disabled = false;
-
-            if (videoInfo) {
-                const originUrl = window.location.origin;
-                if (videoInfo.type === 'youtube') {
-                    // YouTubeの場合は設定直後から音あり(mute=0)で再生
-                    iframePlayer.src = `https://www.youtube.com/embed/${videoInfo.id}?enablejsapi=1&autoplay=1&mute=0&loop=1&playlist=${videoInfo.id}&origin=${originUrl}`;
-                } else if (videoInfo.type === 'tiktok') {
-                    // TikTokは自動再生パラメータを付けるが、ブラウザ制限で音が出ないためタップが必要
-                    iframePlayer.src = `https://www.tiktok.com/embed/v2/${videoInfo.id}?autoplay=1`;
-                }
-                
-                settingsModal.classList.add('hidden');
-                urlInput.value = ''; // 入力欄をクリア
-            } else {
-                errorMsg.textContent = "URLの解析に失敗しました。対応していないURLか、TikTokの短縮URLがプロキシにブロックされています。ブラウザで一度開いて長いURLをコピーしてください。";
-                errorMsg.classList.remove('hidden');
+        document.getElementById('save_btn').addEventListener('click', async () => {
+            const url = document.getElementById('url_input').value;
+            const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`);
+            const data = await res.json();
+            const idMatch = data.contents.match(/(?:video\/|v=)([\w-]{11,20})/);
+            if(idMatch) {
+                const isTikTok = url.includes('tiktok');
+                iframe.src = isTikTok ? `https://www.tiktok.com/embed/v2/${idMatch[1]}?autoplay=1` : `https://www.youtube.com/embed/${idMatch[1]}?autoplay=1&mute=0`;
+                settings.classList.add('hidden');
             }
         });
 
-        // Mediapipeの手検出のセットアップ
-        const hands = new Hands({locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-        }});
-        hands.setOptions({
-            maxNumHands: 1,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.7,
-            minTrackingConfidence: 0.7
-        });
-
-        // 毎フレームの処理
+        const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+        hands.setOptions({maxNumHands: 1, minDetectionConfidence: 0.7});
         hands.onResults((results) => {
-            // キャンバスサイズをウィンドウに合わせる
-            canvasElement.width = window.innerWidth;
-            canvasElement.height = window.innerHeight;
+            canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
 
-            // カメラ映像の描画（これがないと背景が真っ暗になります）
-            canvasCtx.save();
-            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0];
+            if (results.multiHandLandmarks?.length > 0) {
+                const lm = results.multiHandLandmarks[0];
+                const wrist = lm[0], tip = lm[12], mcp = lm[9];
                 
-                // 骨組みの描画
-                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 4});
-                drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 2, radius: 4});
+                const dx = tip.x - wrist.x, dy = tip.y - wrist.y;
+                const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+                const isVertical = (angle > -130 && angle < -50);
 
-                // 必要なポイントを取得
-                const wrist = landmarks[0];        // 手首
-                const middleMcp = landmarks[9];    // 中指の付け根
-                const middleTip = landmarks[12];   // 中指の先
+                ytContainer.style.width = isVertical ? '360px' : '640px';
+                ytContainer.style.height = isVertical ? '640px' : '360px';
+                
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                const scale = scaleValue * (dist / 0.3);
 
-                // --- ホログラムの中心を「手のひらの中央」に計算 ---
-                const centerX = (wrist.x + middleMcp.x) / 2;
-                const centerY = (wrist.y + middleMcp.y) / 2;
-                const pixelX = centerX * canvasElement.width;
-                const pixelY = centerY * canvasElement.height;
-
-                // --- 角度と手の向きの計算（スマート回転） ---
-                // 手首から中指の先に向かうベクトルを計算
-                const dx = middleTip.x - wrist.x;
-                const dy = middleTip.y - wrist.y;
-                // -180度 〜 180度の角度を取得
-                const angle = Math.atan2(dy, dx) * (180 / Math.PI); 
-
-                /* 
-                 * スマート回転ロジック:
-                 * 指先が上(天)を向いている時、angle は -90度 付近になります。
-                 * ガタツキを防ぐため、切り替わりに遊び(ヒステリシス)を持たせます。
-                 */
-                if (handPosture === 'horizontal') {
-                    // もし手が「上」を強く向いたら（-130度 〜 -50度）縦モードへ
-                    if (angle > -130 && angle < -50) {
-                        handPosture = 'vertical';
-                    }
-                } else {
-                    // 縦モード中、手が「上」から外れたら（-140度より下、または-40度より上）横モードへ戻る
-                    if (angle < -140 || angle > -40) {
-                        handPosture = 'horizontal';
-                    }
-                }
-
-                // 状態に応じて枠の形と最終的な回転角度を決定
-                let finalAngle = angle;
-                if (handPosture === 'vertical') {
-                    // 指先が天を向いている（縦動画モード）
-                    // 動画の「頭」が指先に向くように、角度を +90度 補正する
-                    // （angleが-90度の時、finalAngleが0度＝まっすぐ上になる）
-                    finalAngle += 90;
-                    ytContainer.style.width = '360px';
-                    ytContainer.style.height = '640px';
-                } else {
-                    // 指先が右などを向いている（横動画モード）
-                    // 腕のラインと動画の横ラインを一致させるため角度はそのまま
-                    ytContainer.style.width = '640px';
-                    ytContainer.style.height = '360px';
-                }
-
-                // --- 遠近感(Depth)モードの計算 ---
-                // 手首から中指の先までの長さを「手の大きさ」とする
-                const handSize = Math.sqrt(dx * dx + dy * dy); 
-                // 基準となる手の割合（画面に対してどれくらいか）
-                const baseHandSize = 0.3; 
-                // 設定されたベースサイズ × 遠近による変化率
-                const finalScale = scaleValue * (handSize / baseHandSize);
-
-                // --- CSSに適用 ---
-                ytContainer.style.left = `${pixelX}px`;
-                ytContainer.style.top = `${pixelY}px`;
-                ytContainer.style.transform = `translate(-50%, -50%) scale(${finalScale}) rotate(${finalAngle}deg)`;
+                ytContainer.style.left = `${wrist.x * canvas.width}px`;
+                ytContainer.style.top = `${wrist.y * canvas.height}px`;
+                ytContainer.style.transform = `scale(${scale}) rotate(${isVertical ? angle + 90 : angle}deg)`;
                 ytContainer.style.opacity = 1;
-
-            } else {
-                // 手が認識されない場合は隠す
-                ytContainer.style.opacity = 0;
-            }
-            canvasCtx.restore();
+            } else { ytContainer.style.opacity = 0; }
         });
 
-        // カメラの起動（アウトカメラを指定）
-        const camera = new Camera(videoElement, {
-            onFrame: async () => {
-                await hands.send({image: videoElement});
-            },
-            width: 1280,
-            height: 720,
-            facingMode: 'environment' // アウトカメラ
-        });
-        camera.start();
+        new Camera(document.getElementById('input_video'), {
+            onFrame: async () => await hands.send({image: document.getElementById('input_video')}),
+            facingMode: 'environment'
+        }).start();
     </script>
+    <video id="input_video" style="display:none"></video>
 </body>
 </html>
