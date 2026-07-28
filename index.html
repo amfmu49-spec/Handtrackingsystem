@@ -2,127 +2,154 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
+    <!-- スマホ対応・レスポンシブ設定 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <!-- YouTubeの「Error 153」を防ぐための重要なセキュリティポリシー -->
+    <!-- エラー153対策: YouTubeへ正しいリファラーを送信する -->
     <meta name="referrer" content="origin">
-    <title>AR Hand Tracker - YouTube Hologram</title>
+    <title>AR Hand Tracker - YouTube Palm (v3.6.0)</title>
     
+    <!-- Tailwind CSS (スタイリング用) -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
     
+    <!-- MediaPipe Hands & Camera Utils -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+
     <style>
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            background-color: #000; overflow: hidden;
+            font-family: 'Inter', sans-serif;
+        }
+
+        #video_container {
+            position: relative; width: 100vw; height: 100vh;
+        }
+
+        /* カメラ映像用の隠し要素 */
+        #input_video {
+            display: none; 
+        }
+
+        /* 描画用キャンバス */
+        #output_canvas {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%; object-fit: cover; z-index: 1;
+        }
+
+        /* YouTubeコンテナ（初期状態は透明にしておく） */
         #yt_container {
-            position: absolute;
-            z-index: 10;
-            width: 320px;
-            height: 180px;
-            /* 基準点を「中央」に設定 (手のひらの中心に合わせるため) */
+            position: absolute; z-index: 10;
+            width: 320px; height: 180px; 
+            /* translate(-50%, -50%) で中心（手のひら）を基準に配置し、scale/rotateを適用 */
             transform-origin: center center;
-            pointer-events: none;
-            opacity: 0;
+            pointer-events: none; /* タップ操作は貫通させる */
+            opacity: 0; 
             transition: opacity 0.2s ease;
             box-shadow: 0 15px 35px rgba(0,0,0,0.6);
-            border-radius: 12px;
-            border: 2px solid rgba(255, 255, 255, 0.2);
-            overflow: hidden;
-            background: #000;
+            border-radius: 12px; border: 2px solid rgba(255, 255, 255, 0.2);
+            overflow: hidden; background: #000;
         }
-        
-        iframe {
-            width: 100%;
-            height: 100%;
-            border: none;
-            pointer-events: auto;
+
+        #yt_container iframe {
+            width: 100%; height: 100%; border: none;
+            pointer-events: auto; /* iframe内のタップは有効化 */
         }
 
         /* 美しいガラスモーフィングデザイン */
         .glass {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(24px);
-            -webkit-backdrop-filter: blur(24px);
-            border-top: 1px solid rgba(255, 255, 255, 0.4);
-            border-left: 1px solid rgba(255, 255, 255, 0.3);
-            border-right: 1px solid rgba(255, 255, 255, 0.1);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 25px 45px rgba(0, 0, 0, 0.2);
+            background: rgba(25, 25, 35, 0.6);
+            backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            border-top: 1px solid rgba(255, 255, 255, 0.3);
+            border-left: 1px solid rgba(255, 255, 255, 0.2);
+            border-right: 1px solid rgba(255, 255, 255, 0.05);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 25px 45px rgba(0, 0, 0, 0.3);
         }
 
-        /* 入力欄のリッチ化 */
         .glass-input {
-            background: rgba(0, 0, 0, 0.4);
+            background: rgba(0, 0, 0, 0.5);
             border: 1px solid rgba(255, 255, 255, 0.1);
             color: #fff;
         }
         .glass-input:focus {
-            background: rgba(0, 0, 0, 0.6);
+            background: rgba(0, 0, 0, 0.7);
             border-color: rgba(59, 130, 246, 0.8);
             box-shadow: 0 0 12px rgba(59, 130, 246, 0.5);
+            outline: none;
+        }
+
+        .glass-badge {
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
     </style>
 </head>
-<body class="bg-black overflow-hidden relative w-screen h-screen">
-    
-    <!-- カメラ映像 (非表示にしてCanvasに描画する) -->
-    <video id="input_video" class="hidden" playsinline></video>
-    <!-- AR描画用キャンバス -->
-    <canvas id="output_canvas" class="absolute top-0 left-0 w-full h-full object-cover z-0"></canvas>
-    
-    <!-- YouTube動画コンテナ（手のひらの中央に追従） -->
-    <div id="yt_container">
-        <!-- Error 153対策のため、直接iframeを配置してoriginを指定 -->
-        <iframe id="youtube_player" 
-            src="https://www.youtube.com/embed/jfKfPfyJRdk?enablejsapi=1&autoplay=1&mute=1&loop=1&playlist=jfKfPfyJRdk&origin=https://google.com" 
-            title="YouTube video player" 
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
-            referrerpolicy="strict-origin-when-cross-origin"
-            allowfullscreen>
-        </iframe>
+<body>
+
+    <div id="video_container">
+        <!-- バージョン情報 -->
+        <div class="absolute top-4 left-4 z-50 glass-badge text-white px-4 py-2 rounded-full font-bold text-sm tracking-wider shadow-lg">
+            AR HAND TRACKER v3.6.0
+        </div>
+        
+        <!-- 操作ヒント -->
+        <div class="absolute bottom-6 left-0 right-0 z-50 text-center pointer-events-none text-white text-sm font-medium opacity-75 text-shadow-md">
+            画面をタップして設定を開く / 音声をオン
+        </div>
+
+        <!-- 隠しビデオ要素（カメラソース） -->
+        <video id="input_video" playsinline></video>
+        
+        <!-- 手の骨組みを描画するキャンバス -->
+        <canvas id="output_canvas"></canvas>
+
+        <!-- YouTubeプレイヤーのコンテナ -->
+        <div id="yt_container">
+            <!-- 
+                エラー153対策: iframeで直接読み込み、referrerpolicy="strict-origin-when-cross-origin" を付与
+                初期状態は制限回避のため mute=1 (無音) で読み込む
+            -->
+            <iframe id="youtube_player" 
+                    src=""
+                    title="YouTube video player" 
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" 
+                    referrerpolicy="strict-origin-when-cross-origin" 
+                    allowfullscreen>
+            </iframe>
+        </div>
     </div>
 
-    <!-- バージョン情報と操作ヒント -->
-    <div class="absolute top-4 left-4 z-20 pointer-events-none">
-        <h1 class="text-white font-bold text-2xl drop-shadow-lg tracking-wider">AR HAND TRACKER <span class="text-blue-400">v3.6.0</span></h1>
-        <p class="text-gray-300 mt-2 drop-shadow-md bg-black/30 inline-block px-3 py-1 rounded-full text-sm">
-            画面をタップして設定を開く
-        </p>
-    </div>
-
-    <!-- 設定モーダル (初期非表示) -->
-    <div id="settings_modal" class="hidden absolute top-0 left-0 w-full h-full bg-black/50 z-30 flex items-center justify-center p-6 backdrop-blur-sm">
-        <div class="glass rounded-3xl p-8 w-full max-w-md relative overflow-hidden">
-            <!-- 装飾用の光彩 -->
-            <div class="absolute -top-20 -right-20 w-40 h-40 bg-blue-500 rounded-full mix-blend-screen filter blur-[50px] opacity-50 pointer-events-none"></div>
-            <div class="absolute -bottom-20 -left-20 w-40 h-40 bg-purple-500 rounded-full mix-blend-screen filter blur-[50px] opacity-50 pointer-events-none"></div>
-            
-            <h2 class="text-2xl font-bold text-white mb-6 relative z-10 flex items-center gap-3">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                Hologram Settings
+    <div id="settings_modal" class="fixed inset-0 z-[100] hidden flex-col items-center justify-center p-4">
+        <!-- 背景の暗転（ここをタップで閉じる） -->
+        <div id="modal_backdrop" class="absolute inset-0 bg-black/60 transition-opacity"></div>
+        
+        <!-- モーダル本体 -->
+        <div class="glass relative w-full max-w-sm rounded-3xl p-8 flex flex-col gap-6 text-white transform transition-all shadow-2xl">
+            <h2 class="text-2xl font-extrabold tracking-wide text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400">
+                設定 / Settings
             </h2>
             
-            <!-- サイズ調整スライダー -->
-            <div class="mb-8 relative z-10">
-                <label class="block text-xs font-medium text-gray-300 mb-3 flex justify-between tracking-widest">
-                    <span>SIZE</span>
-                    <!-- 初期値30% -->
-                    <span id="size_value" class="text-blue-300 font-bold">30%</span>
-                </label>
-                <input type="range" id="size_slider" min="0.1" max="2.0" step="0.1" value="0.3" class="w-full accent-blue-500 h-2 bg-gray-700/50 rounded-lg appearance-none cursor-pointer">
+            <div class="flex flex-col gap-2">
+                <label class="text-sm font-medium text-gray-300">YouTube動画 URL</label>
+                <input type="text" id="url_input" placeholder="https://youtu.be/..." class="glass-input p-4 rounded-xl text-sm w-full transition-all">
+                <p class="text-xs text-gray-400 mt-1">※設定後、音声ありで再生されます</p>
             </div>
 
-            <!-- YouTube URL入力 -->
-            <div class="relative z-10 space-y-3">
-                <label class="block text-xs font-medium text-gray-300 tracking-widest">YOUTUBE URL</label>
-                <input type="text" id="youtube_url" placeholder="https://youtu.be/..." class="glass-input w-full px-4 py-3 rounded-xl focus:outline-none transition-all duration-300">
-                <button id="update_btn" class="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-all transform hover:scale-105 active:scale-95">
-                    UPDATE HOLOGRAM
-                </button>
+            <div class="flex flex-col gap-2 mt-2">
+                <label class="text-sm font-medium text-gray-300 flex justify-between">
+                    <span>ホログラムサイズ</span>
+                    <span id="scale_display">30%</span>
+                </label>
+                <!-- 初期値を30%、範囲を10%〜200%に設定 -->
+                <input type="range" id="scale_slider" min="0.1" max="2.0" step="0.1" value="0.3" class="w-full accent-blue-500 h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer">
             </div>
+
+            <button id="save_btn" class="mt-4 w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-500/30 transition-all active:scale-95">
+                適用して閉じる
+            </button>
         </div>
     </div>
 
@@ -133,65 +160,84 @@
         const ytContainer = document.getElementById('yt_container');
         const iframePlayer = document.getElementById('youtube_player');
         
+        // UI Elements
         const settingsModal = document.getElementById('settings_modal');
-        const sizeSlider = document.getElementById('size_slider');
-        const sizeValue = document.getElementById('size_value');
-        const urlInput = document.getElementById('youtube_url');
-        const updateBtn = document.getElementById('update_btn');
+        const modalBackdrop = document.getElementById('modal_backdrop');
+        const urlInput = document.getElementById('url_input');
+        const scaleSlider = document.getElementById('scale_slider');
+        const scaleDisplay = document.getElementById('scale_display');
+        const saveBtn = document.getElementById('save_btn');
 
-        // 初期サイズ 30%
-        let currentScale = 0.3;
+        // アプリの状態
+        let scaleValue = parseFloat(scaleSlider.value);
+        let isProcessing = false; // WASMクラッシュ防止のロック変数
 
-        // 背景のキャンバスをタップしたら設定を開く
+        // 初期設定 (初回の動画)
+        const initialVideoId = "Q_B299n02qI";
+        const originUrl = window.location.origin || 'https://google.com';
+        // 初期状態はミュート(mute=1)にしておく（自動再生ブロック回避のため）
+        iframePlayer.src = `https://www.youtube.com/embed/${initialVideoId}?enablejsapi=1&autoplay=1&mute=1&loop=1&playlist=${initialVideoId}&origin=${originUrl}`;
+
+        // 背景のキャンバスをタップしたら設定を開く ＆ ミュート解除
         canvasElement.addEventListener('click', () => {
             settingsModal.classList.remove('hidden');
             settingsModal.classList.add('flex');
+
+            // ユーザーのタップ操作を検知したタイミングで、YouTubeのミュートを解除する
+            if (iframePlayer && iframePlayer.contentWindow) {
+                iframePlayer.contentWindow.postMessage(JSON.stringify({
+                    "event": "command",
+                    "func": "unMute",
+                    "args": []
+                }), "*");
+                iframePlayer.contentWindow.postMessage(JSON.stringify({
+                    "event": "command",
+                    "func": "setVolume",
+                    "args": [100]
+                }), "*");
+            }
         });
 
-        // モーダルの背景（外側）をタップしたら閉じる
-        settingsModal.addEventListener('click', (e) => {
-            // モーダルの中身（パネル）ではなく、親要素（暗い背景）がクリックされた時だけ閉じる
-            if (e.target === settingsModal) {
+        // モーダルの背景（外側の暗い部分）をタップしたら閉じる
+        modalBackdrop.addEventListener('click', () => {
+            settingsModal.classList.add('hidden');
+            settingsModal.classList.remove('flex');
+        });
+
+        // スライダー操作
+        scaleSlider.addEventListener('input', (e) => {
+            scaleValue = parseFloat(e.target.value);
+            scaleDisplay.textContent = Math.round(scaleValue * 100) + '%';
+        });
+
+        // URL保存・適用ボタン
+        saveBtn.addEventListener('click', () => {
+            let url = urlInput.value.trim();
+            if (url) {
+                // YouTubeのURLからVideoIDを抽出
+                let videoId = null;
+                const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+                const match = url.match(regExp);
+                if (match && match[2].length === 11) {
+                    videoId = match[2];
+                }
+
+                if (videoId) {
+                    // 新しいURLを設定した時は、すでにユーザー操作後なので mute=0（音声あり）にする
+                    const newUrl = `https://www.youtube.com/embed/${videoId}?enablejsapi=1&autoplay=1&mute=0&loop=1&playlist=${videoId}&origin=${originUrl}`;
+                    iframePlayer.src = newUrl;
+                    
+                    settingsModal.classList.add('hidden');
+                    settingsModal.classList.remove('flex');
+                } else {
+                    alert("有効なYouTube URLを入力してください。");
+                }
+            } else {
                 settingsModal.classList.add('hidden');
                 settingsModal.classList.remove('flex');
             }
         });
 
-        // スライダーでサイズ変更
-        sizeSlider.addEventListener('input', (e) => {
-            currentScale = parseFloat(e.target.value);
-            sizeValue.textContent = Math.round(currentScale * 100) + '%';
-        });
-
-        // URL更新ボタンの処理
-        updateBtn.addEventListener('click', () => {
-            const url = urlInput.value;
-            let videoId = '';
-            
-            try {
-                if (url.includes('youtu.be/')) {
-                    videoId = url.split('youtu.be/')[1].split('?')[0];
-                } else if (url.includes('youtube.com/watch')) {
-                    videoId = url.split('v=')[1].split('&')[0];
-                } else if (url.includes('youtube.com/shorts/')) {
-                    videoId = url.split('shorts/')[1].split('?')[0];
-                }
-                
-                if (videoId) {
-                    // originを付与してError 153を回避しつつ、新しい動画を読み込む
-                    const newUrl = `https://www.youtube.com/embed/${videoId}?enablejsapi=1&autoplay=1&mute=1&loop=1&playlist=${videoId}&origin=${window.location.origin || 'https://google.com'}`;
-                    iframePlayer.src = newUrl;
-                    
-                    settingsModal.classList.add('hidden');
-                    settingsModal.classList.remove('flex');
-                    urlInput.value = ''; // 入力欄をクリア
-                }
-            } catch (error) {
-                console.error("URLの解析に失敗しました", error);
-            }
-        });
-
-        // Canvasのサイズを画面に合わせる
         function resizeCanvas() {
             canvasElement.width = window.innerWidth;
             canvasElement.height = window.innerHeight;
@@ -199,79 +245,90 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // 認識結果の処理ループ
-        function onResults(results) {
-            canvasCtx.save();
-            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-            
-            // カメラ映像をCanvasに描画 (左右反転なし)
-            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
-
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0];
-                
-                // 1. 手の骨格（ポインタ）を描画する
-                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 3});
-                drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 2, radius: 3});
-
-                // 2. 手のひらの中央座標を取得（手首:0 と 中指の付け根:9 の中間点）
-                const wrist = landmarks[0];
-                const middleFingerBase = landmarks[9];
-
-                // 画面上のピクセル座標に変換
-                const centerX = ((wrist.x + middleFingerBase.x) / 2) * canvasElement.width;
-                const centerY = ((wrist.y + middleFingerBase.y) / 2) * canvasElement.height;
-
-                // 2Dの傾きを計算 (腕の向きに合わせて動画が回転する)
-                const dx = middleFingerBase.x - wrist.x;
-                const dy = middleFingerBase.y - wrist.y;
-                const angleRad = Math.atan2(dy, dx);
-                let angleDeg = angleRad * (180 / Math.PI);
-                
-                // カメラからの奥行き距離からスケールを計算
-                const baseDistance = Math.sqrt(dx*dx + dy*dy);
-                const depthScale = baseDistance * 10;
-                const finalScale = currentScale * depthScale;
-
-                // 3. YouTubeコンテナを手のひらの中央に配置・回転・拡縮
-                ytContainer.style.opacity = 1;
-                // コンテナの中心を手のひら中央に合わせる
-                ytContainer.style.transform = `
-                    translate(${centerX}px, ${centerY}px) 
-                    translate(-50%, -50%) 
-                    rotate(${angleDeg}deg) 
-                    scale(${finalScale})
-                `;
-            } else {
-                // 手が認識されない場合はホログラムを隠す
-                ytContainer.style.opacity = 0;
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
             }
-            canvasCtx.restore();
-        }
-
-        const hands = new Hands({locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-        }});
+        });
 
         hands.setOptions({
-            maxNumHands: 1, // 片手のみ認識（処理を軽くするため）
-            modelComplexity: 1,
+            maxNumHands: 1, // 1つの手だけを認識（軽量化）
+            modelComplexity: 1, // 精度と速度のバランス
             minDetectionConfidence: 0.6,
             minTrackingConfidence: 0.6
         });
 
-        hands.onResults(onResults);
+        // 手が認識されたときの処理（毎フレーム呼ばれる）
+        hands.onResults((results) => {
+            // キャンバスをクリア
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
 
-        // カメラの起動（アウトカメラを指定）
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+
+                // 骨組み（ポインタ）を描画する（緑の点、赤い線）
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#FF3B30', lineWidth: 4});
+                drawLandmarks(canvasCtx, landmarks, {color: '#34C759', lineWidth: 2, radius: 4});
+
+                // --- ホログラムの配置計算 ---
+                // 手のひらの中央（手首:0 と 中指の付け根:9 の中間）を計算
+                const wrist = landmarks[0];
+                const middleFingerMCP = landmarks[9];
+                const palmX = (wrist.x + middleFingerMCP.x) / 2;
+                const palmY = (wrist.y + middleFingerMCP.y) / 2;
+
+                // 画面上のピクセル座標に変換
+                const pixelX = palmX * canvasElement.width;
+                const pixelY = palmY * canvasElement.height;
+
+                // 手の傾き（角度）を計算：手首(0) から 中指の付け根(9) へのベクトル
+                const dx = middleFingerMCP.x - wrist.x;
+                const dy = middleFingerMCP.y - wrist.y;
+                // 通常は縦向きですが、手を横にした時に動画が水平になるよう +90度 補正する
+                const angle = Math.atan2(dy, dx) * (180 / Math.PI) + 90;
+
+                // YouTubeコンテナの位置・サイズ・角度を更新
+                ytContainer.style.left = `${pixelX}px`;
+                ytContainer.style.top = `${pixelY}px`;
+                // translate(-50%, -50%) で中心を基準にし、スケールと回転を適用
+                ytContainer.style.transform = `translate(-50%, -50%) scale(${scaleValue}) rotate(${angle}deg)`;
+                ytContainer.style.opacity = 1; // 表示
+
+            } else {
+                // 手が見つからない時はYouTubeを隠す
+                ytContainer.style.opacity = 0;
+            }
+            
+            canvasCtx.restore();
+            // 処理完了ロック解除
+            isProcessing = false;
+        });
+
         const camera = new Camera(videoElement, {
             onFrame: async () => {
-                await hands.send({image: videoElement});
+                // 前のフレームの処理が終わっていない場合はスキップ（クラッシュ防止）
+                if (isProcessing) return;
+                isProcessing = true;
+
+                try {
+                    await hands.send({image: videoElement});
+                } catch (error) {
+                    console.error("MediaPipe Error:", error);
+                    isProcessing = false; // エラー時もロック解除
+                }
             },
             width: 1280,
             height: 720,
-            facingMode: 'environment' // アウトカメラを使用
+            facingMode: 'environment' // 必ず「アウトカメラ（外側）」を使用
         });
-        camera.start();
+
+        // 全ての設定が終わったらカメラをスタート
+        camera.start().catch(err => {
+            console.error("Camera access failed:", err);
+            alert("カメラへのアクセスが拒否されたか、利用できません。");
+        });
+
     </script>
 </body>
 </html>
